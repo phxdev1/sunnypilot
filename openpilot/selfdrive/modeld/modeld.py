@@ -339,6 +339,7 @@ def main(demo=False):
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
+  DH.enable_bsm = CP.enableBsm
   RELC = RoadEdgeLaneChangeController()
 
   while True:

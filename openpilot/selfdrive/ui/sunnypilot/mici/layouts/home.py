@@ -10,14 +10,31 @@ import pyray as rl
 
 from openpilot.selfdrive.ui.mici.layouts.home import MiciHomeLayout
 from openpilot.selfdrive.ui.ui_state import ui_state, ChestnutState
-from openpilot.system.ui.lib.application import FontWeight
-from openpilot.system.ui.widgets.label import UnifiedLabel
+from openpilot.system.ui.lib.application import gui_app
+
+CANOPY_WORDMARK = "../../sunnypilot/selfdrive/assets/images/canopy/canopy_wordmark.png"
+WORDMARK_ASPECT = 699 / 177
+
+
+class CanopyWordmark:
+  """Draws the Canopy wordmark where the home screen drew its brand label."""
+  def __init__(self, height: int = 72, slot: int = 88):
+    self.font_size = slot  # the parent lays out the version line under this
+    self._top = (slot - height) // 2 + 8
+    self._tex = gui_app.texture(CANOPY_WORDMARK, round(height * WORDMARK_ASPECT), height)
+    self._x = self._y = 0.0
+
+  def set_position(self, x: float, y: float):
+    self._x, self._y = x, y
+
+  def render(self, *_):
+    rl.draw_texture_v(self._tex, rl.Vector2(self._x + 4, self._y + self._top), rl.WHITE)
 
 
 class MiciHomeLayoutSP(MiciHomeLayout):
   def __init__(self):
     super().__init__()
-    self._openpilot_label = UnifiedLabel("sunnypilot", font_size=88, font_weight=FontWeight.AUDIOWIDE, max_width=480, wrap_text=False)
+    self._openpilot_label = CanopyWordmark()
 
   def _set_chestnut_visibility(self):
     usb_connected = ui_state.usb_connected

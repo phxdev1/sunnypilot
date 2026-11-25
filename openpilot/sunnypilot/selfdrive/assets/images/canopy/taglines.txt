@@ -1,0 +1,32 @@
+# Canopy boot taglines: one shows under the logo on each boot, in order, looping.
+# Style: "we have no business doing this, and it's totally legal." Two lines max on the comma. Plus dad jokes: Mark maintains the fork.
+Level 2 autonomy. Level 1 confidence.
+Vibe coded autonomous vehicles. What could go wrong?
+Merging branches, at 60MPH.
+Self-driving code from a guy on GitHub. Totally legal.
+Merged at 2 AM. Driving by 8.
+Oh no. Dad made the car drive itself.
+Tested in the driveway. Shipped to the freeway.
+Warranty status: thoughts and prayers.
+Nissan didn't approve this. Nissan wasn't asked.
+Dad, why is the steering wheel moving?
+Legal, because nobody thought to ban it.
+Dad force-pushed the steering. Again.
+Somebody on Discord said this was fine.
+No engineering license required. Apparently.
+Buckle up, kids. Dad pushed to main.
+Unit tests optional. Seat belts mandatory.
+Steering code reviewed by a chatbot. Street legal.
+We read the docs. Some of them.
+Dad merged without tests. Everybody in.
+Dad updated the car again. Nobody asked him to.
+Built between school pickups. Drives itself now.
+If it works, it's engineering. If not, it's open source.
+Your insurer would like a word.
+Dad's code is driving. Hold on to something.
+The DMV has no idea. Also no rule against it.
+Dad's shipping a hotfix. We're on the freeway.
+Self-driving, some assembly required.
+Hold the wheel. We're improvising.
+Nobody tell Mom. Dad flashed the car again.
+Works on my car.

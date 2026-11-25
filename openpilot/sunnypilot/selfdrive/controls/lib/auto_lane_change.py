@@ -33,6 +33,9 @@ AUTO_LANE_CHANGE_TIMER = {
 }
 
 ONE_SECOND_DELAY = -1
+# Without working blind spot data, a timed lane change waits at least this long after the signal
+# comes on, so a stalk tap starts it with no wheel push but there is a beat to cancel.
+NO_BSM_MIN_DELAY = 1.0
 EDGE_DELAY = -2
 
 
@@ -52,6 +55,10 @@ class AutoLaneChangeController:
     self.auto_lane_change_allowed = False
     self.prev_lane_change = False
     self.lane_change_blocked = False
+    # Set every frame by DesireHelper: True only when the car reports blind spot monitoring
+    # (CP.enableBsm) and carState CAN is valid this frame. Without it, timed modes wait at least
+    # NO_BSM_MIN_DELAY and the driver's mirror check is the only gate.
+    self.bsm_ok = False
 
     self.read_params()
 
@@ -75,6 +82,8 @@ class AutoLaneChangeController:
   def update_lane_change_timers(self, blindspot_detected: bool, edge_detected: bool) -> None:
     self.lane_change_delay = AUTO_LANE_CHANGE_TIMER.get(self.lane_change_set_timer,
                                                         AUTO_LANE_CHANGE_TIMER[AutoLaneChangeMode.NUDGE])
+    if not self.bsm_ok and self.lane_change_delay > 0:
+      self.lane_change_delay = max(self.lane_change_delay, NO_BSM_MIN_DELAY)
 
     self.lane_change_wait_timer += DT_MDL
 

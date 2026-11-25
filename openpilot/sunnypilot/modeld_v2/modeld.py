@@ -369,6 +369,7 @@ def main(demo=False):
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
+  DH.enable_bsm = CP.enableBsm
   meta_constants = load_meta_constants()
   RELC = RoadEdgeLaneChangeController()
   blendful = Blendful()

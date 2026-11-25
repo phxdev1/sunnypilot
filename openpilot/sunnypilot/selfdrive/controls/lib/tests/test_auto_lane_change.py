@@ -8,7 +8,7 @@ from openpilot.common.parameterized import parameterized
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper, LaneChangeState, LaneChangeDirection
 from openpilot.sunnypilot.selfdrive.controls.lib.auto_lane_change import AutoLaneChangeController, AutoLaneChangeMode, \
-  AUTO_LANE_CHANGE_TIMER, ONE_SECOND_DELAY, EDGE_DELAY
+  AUTO_LANE_CHANGE_TIMER, ONE_SECOND_DELAY, EDGE_DELAY, NO_BSM_MIN_DELAY
 from openpilot.common.test import OpenpilotTestCase
 
 AUTO_LANE_CHANGE_TIMER_COMBOS = [
@@ -24,6 +24,7 @@ class TestAutoLaneChangeController(OpenpilotTestCase):
   def setup_method(self):
     self.DH = DesireHelper()
     self.alc = AutoLaneChangeController(self.DH)
+    self.alc.bsm_ok = True
 
   def _reset_states(self):
     self.alc.lane_change_bsm_delay = False
@@ -289,3 +290,17 @@ class TestAutoLaneChangeController(OpenpilotTestCase):
     # BSM detected with nudge - should still be blocked
     self.alc.update_lane_change(blindspot_detected=True, edge_detected=False, brake_pressed=False, torque_applied=True)
     assert self.alc.lane_change_blocked
+
+  @parameterized.expand(AUTO_LANE_CHANGE_TIMER_COMBOS)
+  def test_no_bsm_waits_at_least_min_delay(self, timer_state, timer_delay):
+    """Without working blind spot data, timed modes still start on the signal alone, but never sooner than NO_BSM_MIN_DELAY."""
+    self._reset_states()
+    self.alc.bsm_ok = False
+    self.alc.lane_change_set_timer = timer_state
+    delay = max(timer_delay, NO_BSM_MIN_DELAY)
+    for _ in range(int(delay / DT_MDL) - 1):
+      self.alc.update_lane_change(blindspot_detected=False, edge_detected=False, brake_pressed=False)
+    assert not self.alc.auto_lane_change_allowed
+    for _ in range(3):
+      self.alc.update_lane_change(blindspot_detected=False, edge_detected=False, brake_pressed=False)
+    assert self.alc.auto_lane_change_allowed

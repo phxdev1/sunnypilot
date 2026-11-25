@@ -11,6 +11,9 @@ TurnDirection = custom.ModelDataV2SP.TurnDirection
 LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
 LANE_CHANGE_TIME_MAX = 10.
 LANE_CHANGE_START_TIME = 0.5
+# Blind spot can cancel a started lane change only this early, while the car is still well inside
+# its own lane. Typical openpilot lane changes take ~4-6 s and cross the line around the midpoint.
+LANE_CHANGE_BSM_ABORT_TIME = 1.5
 
 TURN_DESIRES = {
   TurnDirection.none: log.Desire.none,
@@ -18,23 +21,47 @@ TURN_DESIRES = {
   TurnDirection.turnRight: log.Desire.turnRight,
 }
 
+BLINKER_HOLD_FRAMES = int(0.5 / DT_MDL)  # Canopy: hold each side 0.5 s past its last lit frame
+
+
+class _HeldBlinkers:
+  """carState with the turn signals held through the dark phase of each flash, so a quick
+  3-blink stalk tap reads as one continuous signal. Every other field passes through."""
+  __slots__ = ("_cs", "leftBlinker", "rightBlinker")
+
+  def __init__(self, cs, left, right):
+    self._cs, self.leftBlinker, self.rightBlinker = cs, left, right
+
+  def __getattr__(self, name):
+    return getattr(self._cs, name)
+
+
 class DesireHelper:
   def __init__(self):
     self.lane_change_state = LaneChangeState.off
     self.lane_change_direction = LaneChangeDirection.none
     self.lane_change_timer = 0.0
     self.prev_one_blinker = False
+    self._blinker_hold = [0, 0]  # frames left on the hold, left and right
     self.desire = log.Desire.none
     self.alc = AutoLaneChangeController(self)
     self.lane_turn_controller = LaneTurnController(self)
     self.lane_turn_direction = TurnDirection.none
+    self.enable_bsm = False  # set from CP.enableBsm by modeld
 
   @staticmethod
   def get_lane_change_direction(CS):
     return LaneChangeDirection.left if CS.leftBlinker else LaneChangeDirection.right
 
+  def _hold_blinkers(self, left, right):
+    for i, lit in enumerate((left, right)):
+      self._blinker_hold[i] = BLINKER_HOLD_FRAMES if lit else max(0, self._blinker_hold[i] - 1)
+    return self._blinker_hold[0] > 0, self._blinker_hold[1] > 0
+
   def update(self, carstate, lateral_active, lane_change_prob, left_edge_detected=False, right_edge_detected=False):
+    carstate = _HeldBlinkers(carstate, *self._hold_blinkers(carstate.leftBlinker, carstate.rightBlinker))
     self.alc.update_params()
+    self.alc.bsm_ok = self.enable_bsm and carstate.canValid
     self.lane_turn_controller.update_params()
     v_ego = carstate.vEgo
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
@@ -83,7 +110,24 @@ class DesireHelper:
       elif self.lane_change_state == LaneChangeState.laneChangeStarting:
         self.lane_change_timer += DT_MDL
 
-        if lane_change_prob < 0.02 and self.lane_change_timer >= LANE_CHANGE_START_TIME:
+        # Latched: once started, the signal going off does not cancel it, so a tap carries a full merge.
+        # Cancel on driver torque against the change or the opposite signal (or hazards) at any point.
+        # A blind spot on that side cancels only in the first LANE_CHANGE_BSM_ABORT_TIME, before the car
+        # nears the line: after that the sensor is watching the lane beyond the target, so a car there
+        # must not pull us back across. lateral_active loss and LANE_CHANGE_TIME_MAX still cancel at the top.
+        going_left = self.lane_change_direction == LaneChangeDirection.left
+        opposite_blinker = carstate.rightBlinker if going_left else carstate.leftBlinker
+        torque_against = carstate.steeringPressed and \
+                         ((carstate.steeringTorque < 0) if going_left else (carstate.steeringTorque > 0))
+        blindspot_ahead = (carstate.leftBlindspot if going_left else carstate.rightBlindspot) and \
+                          self.lane_change_timer < LANE_CHANGE_BSM_ABORT_TIME
+
+        if opposite_blinker or torque_against or blindspot_ahead:
+          self.lane_change_state = LaneChangeState.off
+          self.lane_change_direction = LaneChangeDirection.none
+          self.lane_change_timer = 0.0
+
+        elif lane_change_prob < 0.02 and self.lane_change_timer >= LANE_CHANGE_START_TIME:
           self.lane_change_timer = 0.0
           if one_blinker:
             self.lane_change_state = LaneChangeState.preLaneChange
