@@ -1,0 +1,2 @@
+# Canopy assets are small and stored as plain git blobs, not LFS
+* -filter -diff -merge -text
