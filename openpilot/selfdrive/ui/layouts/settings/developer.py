@@ -23,11 +23,11 @@ DESCRIPTIONS = {
     "other than your own. A comma employee will NEVER ask you to add their GitHub username."
   ),
   'alpha_longitudinal': tr_noop(
-    "<b>WARNING: sunnypilot longitudinal control is in alpha for this car and may disable Automatic Emergency Braking (AEB).</b><br><br>" +
-    "On this car, sunnypilot defaults to the car's built-in ACC instead of sunnypilot's longitudinal control. " +
-    "Enable this to switch to sunnypilot longitudinal control. " +
-    "Enabling Experimental mode is recommended when enabling sunnypilot longitudinal control alpha. " +
-    "Changing this setting will restart sunnypilot if the car is powered on."
+    "<b>WARNING: Canopy longitudinal control is in alpha for this car and may disable Automatic Emergency Braking (AEB).</b><br><br>" +
+    "On this car, Canopy defaults to the car's built-in ACC instead of Canopy's longitudinal control. " +
+    "Enable this to switch to Canopy longitudinal control. " +
+    "Enabling Experimental mode is recommended when enabling Canopy longitudinal control alpha. " +
+    "Changing this setting will restart Canopy if the car is powered on."
   ),
 }
 
@@ -79,7 +79,7 @@ class DeveloperLayout(Widget):
     )
 
     self._alpha_long_toggle = toggle_item(
-      lambda: tr("sunnypilot Longitudinal Control (Alpha)"),
+      lambda: tr("Canopy Longitudinal Control (Alpha)"),
       description=lambda: tr(DESCRIPTIONS["alpha_longitudinal"]),
       initial_state=self._params.get_bool("AlphaLongitudinalEnabled"),
       callback=self._on_alpha_long_enabled,
