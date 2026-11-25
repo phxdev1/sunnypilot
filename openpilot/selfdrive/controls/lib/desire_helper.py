@@ -47,7 +47,7 @@ class DesireHelper:
     self.alc = AutoLaneChangeController(self)
     self.lane_turn_controller = LaneTurnController(self)
     self.lane_turn_direction = TurnDirection.none
-    self.enable_bsm = False  # set from CP.enableBsm by modeld
+    self.enable_bsm = False  # set from has_bsm(CP) by modeld
 
   @staticmethod
   def get_lane_change_direction(CS):

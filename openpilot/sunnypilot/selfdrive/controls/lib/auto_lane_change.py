@@ -56,7 +56,7 @@ class AutoLaneChangeController:
     self.prev_lane_change = False
     self.lane_change_blocked = False
     # Set every frame by DesireHelper: True only when the car reports blind spot monitoring
-    # (CP.enableBsm) and carState CAN is valid this frame. Without it, timed modes wait at least
+    # (has_bsm(CP)) and carState CAN is valid this frame. Without it, timed modes wait at least
     # NO_BSM_MIN_DELAY and the driver's mirror check is the only gate.
     self.bsm_ok = False
 

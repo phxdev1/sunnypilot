@@ -18,6 +18,7 @@ import time
 from setproctitle import setproctitle
 
 import openpilot.cereal.messaging as messaging
+from opendbc.sunnypilot.car.interfaces import has_bsm
 from openpilot.common.hardware import COMMA_HARDWARE
 from openpilot.selfdrive.modeld.helpers import chestnut_present, wait_for_chestnut
 from openpilot.cereal import log
@@ -369,7 +370,7 @@ def main(demo=False):
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
-  DH.enable_bsm = CP.enableBsm
+  DH.enable_bsm = has_bsm(CP, None)  # CP.enableBsm is deprecated in this opendbc
   meta_constants = load_meta_constants()
   RELC = RoadEdgeLaneChangeController()
   blendful = Blendful()

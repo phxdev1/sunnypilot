@@ -20,6 +20,7 @@ import threading
 import time
 import numpy as np
 import openpilot.cereal.messaging as messaging
+from opendbc.sunnypilot.car.interfaces import has_bsm
 from openpilot.cereal import log
 from opendbc.car.structs import car
 from openpilot.cereal.messaging import PubMaster, SubMaster
@@ -339,7 +340,7 @@ def main(demo=False):
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
-  DH.enable_bsm = CP.enableBsm
+  DH.enable_bsm = has_bsm(CP, None)  # CP.enableBsm is deprecated in this opendbc
   RELC = RoadEdgeLaneChangeController()
 
   while True:
