@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 import time
 
 from openpilot.sunnypilot.canopy import gates
@@ -343,6 +344,73 @@ class GatesTest(unittest.TestCase):
     self.assertEqual(gates._speed_band(65), "65+")
     self.assertEqual(gates._speed_band(100), "65+")
     self.assertIsNone(gates._speed_band(None))
+
+  def test_conditions_outputs_speed_and_speed_band(self):
+    g = gates.Gates()
+    cond = g.conditions(33.4, -112.0, 1700000000.0, 55, 65)
+    self.assertEqual(cond["speed"], "50-65")
+    self.assertEqual(cond["speed_band"], "50-65")
+    self.assertEqual(cond["speed"], cond["speed_band"])
+
+  def test_speed_band_cell_matches_old_style_speed_key(self):
+    with _TmpDir() as t:
+      _write_gates(gates.GATES_PATH, {
+        "generated": 1000.0,
+        "features": {
+          "sb1": {
+            "light=day|road=freeway|weather=dry|speed_band=50-65": {"status": "live", "tier": "control", "cstar": 0.9},
+          },
+        },
+        "names": {"sb1": "Band"},
+        "combos": {},
+      })
+      g = gates.Gates()
+      g.snapshot()
+      self.assertTrue(g.is_live("sb1", {"light": "day", "road": "freeway", "weather": "dry", "speed": "50-65"}, conf=1.0))
+      self.assertTrue(g.is_live("sb1", {"light": "day", "road": "freeway", "weather": "dry", "speed_band": "50-65"}, conf=1.0))
+      self.assertFalse(g.is_live("sb1", {"light": "day", "road": "freeway", "weather": "dry", "speed": "35-45"}, conf=1.0))
+      self.assertFalse(g.is_live("sb1", {"light": "day", "road": "freeway", "weather": "dry"}, conf=1.0))
+
+  def test_conditions_roundtrip_matches_speed_band_cell(self):
+    with _TmpDir() as t:
+      _write_gates(gates.GATES_PATH, {
+        "generated": 1000.0,
+        "features": {
+          "sb2": {
+            "light=day|road=freeway|weather=dry|speed_band=50-65": {"status": "live", "tier": "control", "cstar": 0.9},
+          },
+        },
+        "names": {"sb2": "Band2"},
+        "combos": {},
+      })
+      g = gates.Gates()
+      with mock.patch.object(gates, "_forge_url", lambda: "http://forge.test"), \
+           mock.patch.object(gates, "_fetch_weather", lambda url: "dry"):
+        g.snapshot(33.4, -112.0, 1700000000.0)
+      cond = g.conditions(33.4, -112.0, 1699963200.0, 55, 65)
+      self.assertEqual(cond["light"], "day")
+      self.assertEqual(cond["road"], "freeway")
+      self.assertEqual(cond["weather"], "dry")
+      self.assertTrue(g.is_live("sb2", cond, conf=1.0))
+
+  def test_has_speed_cells_accepts_speed_band(self):
+    self.assertTrue(gates._has_speed_cells({"speed_band=50-65": {"status": "live"}}))
+    self.assertTrue(gates._has_speed_cells({"light=day|speed=50-65": {"status": "live"}}))
+    self.assertFalse(gates._has_speed_cells({"light=day": {"status": "live"}}))
+
+  def test_norm_cond_fills_missing_speed_key(self):
+    self.assertEqual(gates._norm_cond(None), {})
+    self.assertEqual(gates._norm_cond({"speed": "50-65"})["speed_band"], "50-65")
+    self.assertEqual(gates._norm_cond({"speed_band": "35-45"})["speed"], "35-45")
+    both = gates._norm_cond({"speed": "50-65", "speed_band": "50-65"})
+    self.assertEqual(both, {"speed": "50-65", "speed_band": "50-65"})
+    self.assertEqual(gates._norm_cond({"speed": None, "speed_band": "65+"}), {"speed": "65+", "speed_band": "65+"})
+
+  def test_where_desc_prints_band_once(self):
+    desc = gates._where_desc("light=day|speed_band=50-65", {"light": "day", "road": "freeway", "weather": "dry", "speed": "50-65"})
+    self.assertEqual(desc.count("50-65"), 1)
+    desc2 = gates._where_desc("light=day|speed_band=50-65", {"light": "day", "road": "freeway", "weather": "dry", "speed_band": "50-65"})
+    self.assertEqual(desc2.count("50-65"), 1)
 
   def test_demoted_reads_existing(self):
     with _TmpDir() as t:

@@ -121,7 +121,24 @@ def _parse_cell_keys(ctx_or_blank):
   return out
 
 
+def _norm_cond(cond):
+  """Copy cond with "speed" and "speed_band" made interchangeable.
+
+  gates.json (built on Forge) names speed cells "speed_band=35-45" while older
+  callers pass the band under "speed".  Fill in whichever key is missing so a
+  single comparison treats them as one dimension."""
+  if not isinstance(cond, dict):
+    cond = {}
+  out = dict(cond)
+  for k, other in (("speed", "speed_band"), ("speed_band", "speed")):
+    v = out.get(k)
+    if v is not None and out.get(other) is None:
+      out[other] = v
+  return out
+
+
 def _cell_matches(cell_ctx, cond):
+  cond = _norm_cond(cond)
   if cell_ctx == "_":
     return True
   for piece in cell_ctx.split("|"):
@@ -145,7 +162,7 @@ def _has_speed_cells(features_for_fid):
     for piece in ctx.split("|"):
       if "=" in piece:
         k, _, _ = piece.partition("=")
-        if k == "speed":
+        if k in ("speed", "speed_band"):
           return True
   return False
 
@@ -264,11 +281,12 @@ class Gates:
       if self._data is not None:
         weather = self._data.weather
     speed = _speed_band(mph)
-    return {"light": light, "road": road, "weather": weather, "speed": speed}
+    return {"light": light, "road": road, "weather": weather, "speed": speed, "speed_band": speed}
 
   # ---- is_live ----
 
   def is_live(self, fid, cond, conf=1.0, acting=()):
+    cond = _norm_cond(cond)
     if self._data is None:
       return False
     with self._lock:
@@ -473,6 +491,7 @@ class Gates:
 
 
 def _where_desc(ctx, cond):
+  cond = _norm_cond(cond)
   parts = []
   if cond.get("light"):
     parts.append(cond["light"])
