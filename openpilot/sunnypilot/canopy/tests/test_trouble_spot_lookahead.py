@@ -8,9 +8,11 @@ import builtins
 import json
 import math
 import os
+import time
 import types
 from unittest import mock
 
+from openpilot.sunnypilot.canopy import gates as gates_mod
 from openpilot.sunnypilot.canopy import trouble_spot as ts
 
 LAT, LON = 33.4, -111.8
@@ -230,3 +232,39 @@ def test_view_file_is_read_at_most_twice_a_second(tmp_path):
     assert len(reads) == 2
     assert obj._path_view(50.6, 1000.6)["source"] == "map"
     assert len(reads) == 2
+
+
+def test_own_gates_loads_its_snapshot_so_path_cue_can_fire(tmp_path, monkeypatch):
+  """A TroubleSpots that builds its own Gates must snapshot it. Otherwise is_live stays False on
+  empty data forever and the path cue can never switch on."""
+  gates_path = tmp_path / "gates.json"
+  gates_path.write_text(json.dumps({
+    "generated": 1000.0,
+    "features": {
+      ts.LA_FEATURE: {
+        "path_source=history": {"status": "live", "tier": "cue", "cstar": 0.0},
+      },
+    },
+    "names": {ts.LA_FEATURE: "Look Ahead"},
+    "combos": {},
+  }))
+  monkeypatch.setattr(gates_mod, "GATES_PATH", str(gates_path))
+  monkeypatch.setattr(gates_mod, "DEMOTED_PATH", str(tmp_path / "gates_demoted.json"))
+
+  spot = side_spot()
+  obj, calls, la_shadow, view_path, _ = build(tmp_path, None, [spot])
+  assert obj.gates is not None
+
+  # The class starts the snapshot in a daemon thread; give it up to 2 s to land.
+  deadline = time.monotonic() + 2.0
+  while obj.gates._data is None and time.monotonic() < deadline:
+    time.sleep(0.01)
+  assert obj.gates._data is not None
+
+  # 90 deg off to the east: only the path can see it, and the loaded gate says it is live.
+  write_view(view_path, 1000.0, spot)
+  assert run(obj, 50.0, 1000.0) is True
+  assert obj.last_fire["via"] == "path"
+  assert obj.last_fire["spot"] == "s1"
+  assert len(calls) == 1 and calls[0][0] == "trouble"
+  assert not la_shadow.exists()

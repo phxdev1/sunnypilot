@@ -26,6 +26,7 @@ to /data/canopy/lookahead_cue_shadow.jsonl and nothing is posted.
 import json
 import math
 import os
+import threading
 import time
 
 from openpilot.sunnypilot.canopy import banner
@@ -97,6 +98,7 @@ class TroubleSpots:
       try:
         from openpilot.sunnypilot.canopy.gates import Gates
         gates = Gates()
+        threading.Thread(target=gates.snapshot, daemon=True).start()
       except Exception:
         gates = None
     self.gates = gates
