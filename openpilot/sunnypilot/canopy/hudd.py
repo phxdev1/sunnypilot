@@ -21,6 +21,11 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
   /events also carries {"type": "cue", "slot", "sound": "custom"|"stock"|"silent", "played", "mph",
                "text", "lead_m"} each time a Canopy prompt fires, so Zia can speak only when the
                comma stayed silent and keep quiet right after a cue that already played.
+  /hud "lead" also carries "kind" (sedan, hatchback, suv, pickup, van, semi, motorcycle, bus, unknown),
+               "kind_conf", "make", "model", "color" (null under the 0.8 bar) and "plate" (null unless read),
+               from canopy/leadkind.py: one look-up per new lead track, only while a client is connected.
+               The plate is for the live screen only: it is never on /events, never logged, and dropped when
+               the lead changes. Draw a generic car when kind is "unknown" or missing.
 
 Frame coordinates are the car frame in meters: x forward, y left-positive (model y is
 flipped here so path, lanes, edges and the radar lead all agree).
@@ -38,9 +43,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cereal.messaging as messaging
 from cereal import custom
+from openpilot.common.gps import get_gps_location_service
 from openpilot.common.params import Params
 
 from openpilot.sunnypilot.canopy import banner
+from openpilot.sunnypilot.canopy import leadkind
 from openpilot.sunnypilot.canopy import sounds as canopy_sounds
 
 PORT = int(os.environ.get("CANOPY_HUD_PORT", "8870"))
@@ -50,6 +57,14 @@ MS_TO_MPH = 2.23694
 _ASP = custom.SelfdriveStateSP.AudibleAlert
 CUE_SLOTS = {getattr(_ASP, field): slot for slot, (field, _) in canopy_sounds.SLOTS.items()}
 _params = Params()
+_GPS = get_gps_location_service(_params)
+_lk = {"obj": None}
+
+
+def lead_kind():
+  if _lk["obj"] is None:
+    _lk["obj"] = leadkind.LeadKind()
+  return _lk["obj"]
 
 
 def cue_sound(slot: str) -> str:
@@ -194,11 +209,30 @@ def build_frame(sm) -> dict:
     "sound": int(ss.alertSound.raw),
     "nav_lanes": nav_lanes(),
   }
+  lk = None
+  try:
+    lk = lead_kind()
+    rpy = list(sm["liveCalibration"].rpyCalib) or [0.0, 0.0, 0.0]
+    g = sm[_GPS]
+    gps = (g.latitude, g.longitude) if sm.recv_frame[_GPS] > 0 and g.hasFix else None
+    lk.observe(lead, rpy, gps)
+  except Exception:
+    lk = None  # display only
   if lead.present:
     f["lead"] = {"m": _r(lead.dRel, 1), "y": _r(lead.yRel, 2), "rel_mph": _r(lead.vRel * MS_TO_MPH, 1),
                  "mph": _r(max(lead.vLead, 0.0) * MS_TO_MPH, 1),
-                 "from_radar": bool(lead.radar)}
+                 "from_radar": bool(lead.radar),
+                 "kind": "unknown", "kind_conf": None, "make": None, "model": None, "color": None, "plate": None}
+    info = lk.current() if lk else None
+    if info:
+      f["lead"].update({k: info.get(k) for k in ("kind", "kind_conf", "make", "model", "color", "plate")})
+      f["lead"]["kind"] = f["lead"]["kind"] or "unknown"
   return f
+
+
+def no_plate(lead):
+  """The plate goes to the live /hud screen only, never into /events (Zia and others may log those)."""
+  return None if lead is None else {k: v for k, v in lead.items() if k != "plate"}
 
 
 def events_from(prev, cur) -> list[dict]:
@@ -215,7 +249,7 @@ def events_from(prev, cur) -> list[dict]:
       _lead["since"] = cur["t"]
     elif cur["t"] - _lead["since"] >= 1.0:  # 1 s stable, no flicker on the screen
       _lead["state"], _lead["since"] = has, None
-      ev.append({"type": "lead_new" if has else "lead_gone", "lead": cur["lead"]})
+      ev.append({"type": "lead_new" if has else "lead_gone", "lead": no_plate(cur["lead"])})
   else:
     _lead["since"] = None
   if prev["lane_change"] != cur["lane_change"]:
@@ -244,7 +278,8 @@ def publish(qs, item):
 
 
 def pump():
-  sm = messaging.SubMaster(["modelV2", "carState", "selfdriveState", "radarState", "carControl"])
+  sm = messaging.SubMaster(["modelV2", "carState", "selfdriveState", "radarState", "carControl",
+                                "liveCalibration", _GPS])
   prev = None
   next_t = 0.0
   next_banner = 0.0
