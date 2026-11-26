@@ -102,6 +102,19 @@ def _continuation(trace, idx, horizon):
     return out
 
 
+def _junction_key(item):
+    """Group key for a junction candidate: intersection id, else id before '@'."""
+    x = item["x"]
+    if isinstance(x, dict):
+        jid = x.get("intersection_id")
+        if jid is not None:
+            return "ix:%s" % (jid,)
+    iid = item["id"]
+    if isinstance(iid, str) and iid:
+        return "ix:%s" % (iid.split("@", 1)[0],)
+    return None
+
+
 class LookAhead:
     def __init__(self, base="/data/canopy/lookahead",
                  shadow_path="/data/canopy/lookahead_shadow.jsonl"):
@@ -392,7 +405,7 @@ class LookAhead:
         lon_min = min(lons) - pad_lon
         lon_max = max(lons) + pad_lon
 
-        out = []
+        cands = []
         for it in raw_items:
             la = it["lat"]
             lo = it["lon"]
@@ -435,14 +448,58 @@ class LookAhead:
             if lat_m > limit:
                 continue
             h = it.get("h")
-            if h is not None and abs(_ang_diff(h, bearing)) > ITEM_DEG:
+            kind = it.get("k")
+            junction = kind in ("intersection", "signal")
+            if (not junction and h is not None
+                    and abs(_ang_diff(h, bearing)) > ITEM_DEG):
                 continue
-            out.append({
+            cands.append({
                 "id": it.get("id"),
-                "k": it.get("k"),
-                "along_m": round(along, 1),
+                "k": kind,
+                "along_m": along,
+                "bearing": bearing,
+                "h": h,
                 "x": it.get("x", {}),
+                "junction": junction,
             })
+
+        out = []
+        groups = {}
+        for c in cands:
+            if not c["junction"]:
+                out.append({
+                    "id": c["id"],
+                    "k": c["k"],
+                    "along_m": round(c["along_m"], 1),
+                    "x": c["x"],
+                })
+                continue
+            key = _junction_key(c)
+            if key is None:
+                out.append({
+                    "id": c["id"],
+                    "k": c["k"],
+                    "along_m": round(c["along_m"], 1),
+                    "x": c["x"],
+                })
+                continue
+            groups.setdefault(key, []).append(c)
+
+        for group in groups.values():
+            def pick_key(c):
+                h = c["h"]
+                dev = 361.0 if h is None else abs(_ang_diff(h, c["bearing"]))
+                return (dev, c["along_m"], str(c["id"]))
+
+            pick = min(group, key=pick_key)
+            out.append({
+                "id": pick["id"],
+                "k": "signal" if any(c["k"] == "signal" for c in group)
+                else pick["k"],
+                "along_m": round(min(c["along_m"] for c in group), 1),
+                "x": pick["x"],
+            })
+
         out.sort(key=lambda r: r["along_m"])
         return out, path_len
 
