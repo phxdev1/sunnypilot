@@ -210,12 +210,13 @@ class BlinkerIntent:
     call, conf, why = decide(side, mph, n, conf, turn_count)
 
     live = False
-    speed = None
+    speed_band = None
     if call == "lane_change" and self.gates is not None and not self._off:
       try:
         cond = self.gates.conditions(None, None, None, mph, None)
         if isinstance(cond, dict):
-          speed = cond.get("speed")
+          cond["speed_band"] = cond.get("speed")
+          speed_band = cond.get("speed_band")
         live = bool(self.gates.is_live(FEATURE, cond, conf))
       except Exception:
         live = False
@@ -229,7 +230,7 @@ class BlinkerIntent:
     if _log_decision is not None:
       try:
         _log_decision(FEATURE, call, conf,
-                      ctx={"speed": speed, "side": side, "n": n, "why": why},
+                      ctx={"speed_band": speed_band, "side": side, "n": n},
                       live=live, lat=lat, lon=lon)
       except Exception:
         pass
@@ -243,6 +244,8 @@ class BlinkerIntent:
     if self.gates is not None:
       try:
         cond = self.gates.conditions(None, None, None, mph, None)
+        if isinstance(cond, dict):
+          cond["speed_band"] = cond.get("speed")
         self.gates.demote(FEATURE, cond, reason)
       except Exception:
         pass

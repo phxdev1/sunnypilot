@@ -3,6 +3,7 @@ import json
 import math
 
 from openpilot.sunnypilot.canopy import blinker_intent as bi
+from openpilot.sunnypilot.canopy import gates
 
 
 class FakeGates:
@@ -196,3 +197,44 @@ def test_calls_decision_logger_once_per_blinker(tmp_path, monkeypatch):
   assert len(calls) == 3
   for args, _kwargs in calls:
     assert args[0] == "blinker_intent"
+
+
+def test_real_gates_matches_exported_speed_band_cell(tmp_path, monkeypatch):
+  """A real Gates loaded from a gates.json whose blinker_intent cell is keyed "speed_band=35-45"
+  goes live at 40 mph and stays shadow at 30 mph."""
+  gates_path = tmp_path / "gates.json"
+  demoted_path = tmp_path / "gates_demoted.json"
+  gates_path.write_text(json.dumps({
+    "generated": 1000.0,
+    "features": {
+      "blinker_intent": {
+        "speed_band=35-45": {"status": "live", "tier": "control", "cstar": 0.5},
+        "_": {"status": "shadow", "tier": "control", "cstar": 1.0},
+      },
+    },
+    "names": {"blinker_intent": "Blinker intent"},
+    "combos": {},
+  }))
+  monkeypatch.setattr(gates, "GATES_PATH", str(gates_path))
+  monkeypatch.setattr(gates, "DEMOTED_PATH", str(demoted_path))
+
+  g = gates.Gates()
+  g.snapshot()
+
+  log = tmp_path / "blinker.jsonl"
+  hints = tmp_path / "hints.json"
+  off = tmp_path / "off"
+  intent = bi.BlinkerIntent(gates=g, log_path=str(log), hints_path=str(hints), off_flag=str(off))
+  _fill(intent)
+
+  fast = intent.on_blinker("right", 40.0)
+  assert fast["call"] == "lane_change"
+  assert fast["conf"] == 0.9
+  assert fast["act"] is True
+  assert fast["live"] is True
+
+  slow = intent.on_blinker("right", 30.0)
+  assert slow["call"] == "lane_change"
+  assert slow["act"] is False
+  assert slow["live"] is False
+
