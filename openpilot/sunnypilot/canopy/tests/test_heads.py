@@ -113,6 +113,32 @@ def test_kg_cache_recomputes_only_past_25_m_or_20_deg():
 
 
 # ---------------------------------------------------------------------------
+# the version rule
+# ---------------------------------------------------------------------------
+
+def test_head_version_fixed_vector():
+  canon = "w=0.500000,-0.250000,0.000000|b=-1.000000|base=abc"
+  w, b = [0.5, -0.25, 1e-7], -1.0
+  assert heads.head_canon(w, b, "abc") == canon
+  assert heads.head_version(w, b, "abc") == hashlib.sha256(canon.encode("utf-8")).hexdigest()[:8]
+
+
+def test_head_version_folds_negative_zero():
+  assert heads.head_canon([-0.0, -1e-9], -1e-9, "abc") == "w=0.000000,0.000000|b=0.000000|base=abc"
+
+
+def test_staged_head_is_stored_at_six_decimals_and_rehashes(root):
+  b = _setup(root)
+  h = _head(b["sha"], w=[0.1234567891], b=-0.0000004)
+  heads.stage_head(h, root=str(root))
+  stored = json.loads((root / "staged" / "corner_pass.json").read_text())
+  assert stored["w"] == [0.123457]
+  assert stored["b"] == 0.0
+  assert stored["version"] == heads.head_version(stored["w"], stored["b"], b["sha"])
+  assert heads.head_error(stored, b["sha"]) is None
+
+
+# ---------------------------------------------------------------------------
 # load and the sha rule
 # ---------------------------------------------------------------------------
 

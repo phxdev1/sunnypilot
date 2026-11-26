@@ -14,8 +14,10 @@ Layout under ROOT (/data/canopy/heads):
   last_good/<feature>.json the head that was live before the current one
   bad.json              {feature: [version, ...]} never promoted again
 
-A head carries feature, base_sha, version (first 8 hex of the sha of w, b and
-base_sha) and head_id "<feature>@<version>". Anything that does not check out
+A head carries feature, base_sha, version and head_id "<feature>@<version>".
+The version is the first 8 hex of sha256 of a fixed decimal-format string of
+w, b and base_sha (see head_canon), so Java on the phone stamps the same value
+without depending on Python's float repr. Anything that does not check out
 against the loaded base is ignored and named in HeadSet.errors.
 """
 
@@ -363,10 +365,26 @@ def predict_py(base, head, state_vec, kg_vec):
 # head ids
 # ---------------------------------------------------------------------------
 
+def _fmt6(x):
+  """One weight as 6 decimals; negative zero is written as 0.000000."""
+  s = "%.6f" % float(x)
+  return "0.000000" if s == "-0.000000" else s
+
+
+def _round6(x):
+  """round(x, 6), with -0.0 folded to 0.0 so a stored file re-formats the same."""
+  r = round(float(x), 6)
+  return 0.0 if r == 0.0 else r
+
+
+def head_canon(w, b, base_sha):
+  """The exact string the version is hashed from (portable across languages)."""
+  return "w=" + ",".join(_fmt6(x) for x in w) + "|b=" + _fmt6(b) + "|base=" + base_sha
+
+
 def head_version(w, b, base_sha):
   """The version a head's w and b must agree with, first 8 hex of the sha."""
-  blob = json.dumps({"w": w, "b": b, "base_sha": base_sha}, sort_keys=True, separators=(",", ":"))
-  return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:8]
+  return hashlib.sha256(head_canon(w, b, base_sha).encode("utf-8")).hexdigest()[:8]
 
 
 def head_id(head):
@@ -478,6 +496,10 @@ def stage_head(head, root=None):
     raise ValueError("b")
   if not isinstance(head["base_sha"], str) or not isinstance(head["version"], str):
     raise ValueError("base_sha")
+  # store w and b at 6 decimals so the file re-hashes to its own version
+  head = dict(head)
+  head["w"] = [_round6(v) for v in head["w"]]
+  head["b"] = _round6(head["b"])
   if head["version"] != head_version(head["w"], head["b"], head["base_sha"]):
     raise ValueError("version")
   if head["version"] in read_bad(root).get(f, []):
