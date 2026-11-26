@@ -17,13 +17,8 @@ Layout under ROOT (/data/canopy/heads):
 A head carries feature, base_sha, version (first 8 hex of the sha of w, b and
 base_sha) and head_id "<feature>@<version>". Anything that does not check out
 against the loaded base is ignored and named in HeadSet.errors.
-
-Promotion and rollback only happen at a maneuver boundary: parked, or no
-blinker, no lane change, no lane turn, steering within 15 deg and at least 3 s
-since the feature's last decision. Staged heads only ever score in the shadow
-until a candidate beats the live one on held-out log loss with no takeovers
-where the two disagree.
 """
+
 import hashlib
 import json
 import math

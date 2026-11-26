@@ -12,7 +12,7 @@ _last = {}
 
 def log_decision(feature: str, action: str, conf: float, ctx: dict | None = None,
                  live: bool = False, lat: float | None = None, lon: float | None = None,
-                 head: str | None = None, base: str | None = None,
+                 *, head: str | None = None, base: str | None = None,
                  shadow: dict | None = None) -> None:
   """Log one gate decision; rate-limited per (feature, action), never raises.
 
