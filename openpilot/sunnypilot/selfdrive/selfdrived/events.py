@@ -239,7 +239,7 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "Ramp meter ahead",
       "Watch the light, holding speed",
       AlertStatus.userPrompt, AlertSize.mid,
-      Priority.MID, VisualAlert.none, AudibleAlert.prompt, 4.),
+      Priority.MID, VisualAlert.none, AudibleAlertSP.canopyRampMeter, 4.),
   },
 
   EventNameSP.canopyMoveOver: {
@@ -247,7 +247,7 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "On-ramp merging ahead",
       "Left lane is clear, tap the blinker to move over",
       AlertStatus.userPrompt, AlertSize.mid,
-      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 4.),
+      Priority.LOW, VisualAlert.none, AudibleAlertSP.canopyMoveOver, 4.),
   },
 
   EventNameSP.canopyLaneDrop: {
@@ -255,7 +255,7 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "Right lane ends ahead",
       "Tap the left blinker to move over when it's clear",
       AlertStatus.userPrompt, AlertSize.mid,
-      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 4.),
+      Priority.LOW, VisualAlert.none, AudibleAlertSP.canopyLaneDrop, 4.),
   },
 
   EventNameSP.canopyLaneExit: {
@@ -263,7 +263,7 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "Right lane exits ahead",
       "Tap the left blinker to stay on the freeway",
       AlertStatus.userPrompt, AlertSize.mid,
-      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 4.),
+      Priority.LOW, VisualAlert.none, AudibleAlertSP.canopyLaneDrop, 4.),
   },
 
   EventNameSP.canopyRedLight: {
@@ -271,7 +271,15 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "Red light ahead",
       "ProPILOT won't stop for it, brake",
       AlertStatus.userPrompt, AlertSize.mid,
-      Priority.HIGH, VisualAlert.none, AudibleAlert.prompt, 4.),
+      Priority.HIGH, VisualAlert.none, AudibleAlertSP.canopyRedLight, 4.),
+  },
+
+  EventNameSP.canopyGreenLight: {
+    ET.PERMANENT: Alert(
+      "",
+      "",
+      AlertStatus.normal, AlertSize.none,
+      Priority.MID, VisualAlert.none, AudibleAlertSP.canopyGreenLight, 3.),
   },
 
   EventNameSP.e2eChime: {

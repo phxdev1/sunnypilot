@@ -177,7 +177,9 @@ class E2EAlertsHelper:
       else:
         cloudlog.event("canopy_green")
 
-    if self.green_light_alert or self.lead_depart_alert:
+    if self.green_light_alert:
+      events_sp.add(custom.OnroadEventSP.EventName.canopyGreenLight)  # its own sound slot
+    elif self.lead_depart_alert:
       events_sp.add(custom.OnroadEventSP.EventName.e2eChime)
 
     self.frame += 1

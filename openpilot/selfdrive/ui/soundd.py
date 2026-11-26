@@ -15,6 +15,7 @@ from openpilot.system import micd
 from openpilot.common.hardware import HARDWARE
 
 from openpilot.sunnypilot.selfdrive.ui.quiet_mode import QuietMode
+from openpilot.sunnypilot.canopy import sounds as canopy_sounds
 
 SAMPLE_RATE = 48000
 SAMPLE_BUFFER = 4096 # (approx 100ms)
@@ -41,6 +42,10 @@ sound_list_sp: dict[int, tuple[str, int | None, float]] = {
   AudibleAlertSP.promptSingleLow: ("prompt_single_low.wav", 1, MAX_VOLUME),
   AudibleAlertSP.promptSingleHigh: ("prompt_single_high.wav", 1, MAX_VOLUME),
 }
+# Canopy prompt slots (canopy/sounds.py): played once, loaded from /data/canopy/sounds or the slot default
+CANOPY_SLOTS = {getattr(AudibleAlertSP, field): slot for slot, (field, _) in canopy_sounds.SLOTS.items()}
+for _alert in CANOPY_SLOTS:
+  sound_list_sp[_alert] = ("", 1, MAX_VOLUME)
 
 sound_list: dict[int, tuple[str, int | None, float]] = {
   # AudibleAlert, file name, play count (none for infinite)
@@ -94,6 +99,8 @@ class Soundd(QuietMode):
     # Load all sounds
     for sound in sound_list:
       filename, play_count, volume = sound_list[sound]
+      if sound in CANOPY_SLOTS:
+        continue
 
       with wave.open(BASEDIR + "/openpilot/selfdrive/assets/sounds/" + filename, 'r') as wavefile:
         assert wavefile.getnchannels() == 1
@@ -102,6 +109,18 @@ class Soundd(QuietMode):
 
         length = wavefile.getnframes()
         self.loaded_sounds[sound] = np.frombuffer(wavefile.readframes(length), dtype=np.int16).astype(np.float32) / (2**16/2)
+    self.load_canopy_sounds()
+
+  def load_canopy_sounds(self):
+    """Canopy slots only; safety sounds above are never reloaded or replaced."""
+    self.canopy_mtime = canopy_sounds.dir_mtime()
+    assets = BASEDIR + "/openpilot/selfdrive/assets/sounds"
+    for alert, slot in CANOPY_SLOTS.items():
+      try:
+        self.loaded_sounds[alert] = canopy_sounds.load_slot(slot, assets)
+      except Exception:
+        cloudlog.exception(f"canopy sound {slot} failed")
+        self.loaded_sounds[alert] = np.zeros(SAMPLE_RATE // 10, dtype=np.float32)
 
   def get_sound_data(self, frames): # get "frames" worth of data from the current alert sound, looping when required
 
@@ -198,6 +217,12 @@ class Soundd(QuietMode):
             self.current_volume = self.calculate_volume(float(self.spl_filter_weighted.x))
 
         self.get_audible_alert(sm)
+
+        # new Canopy sounds copied in while parked: pick them up between alerts, about every 5 s
+        if self.current_alert == AudibleAlert.none and self._frame % 100 == 0:
+          m = canopy_sounds.dir_mtime()
+          if m != self.canopy_mtime:
+            self.load_canopy_sounds()
 
         # Ramp up immediate warning sound over 4s
         if self.current_alert == AudibleAlert.warningImmediate:

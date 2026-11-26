@@ -112,6 +112,15 @@ struct SelfdriveStateSP @0x81c2f05a394cf4af {
 
     promptSingleLow @31;
     promptSingleHigh @32;
+
+    # Canopy prompt slots: each plays /data/canopy/sounds/<slot>.wav when present (canopy/sounds.py)
+    canopyRedLight @33;
+    canopyGreenLight @34;
+    canopyRampMeter @35;
+    canopyMoveOver @36;
+    canopyLaneDrop @37;
+    canopyCoast @38;
+    canopyGarage @39;
   }
 }
 
@@ -365,6 +374,7 @@ struct OnroadEventSP @0xda96579883444c35 {
     canopyLaneDrop @28;
     canopyLaneExit @29;
     canopyRedLight @30;
+    canopyGreenLight @31;
   }
 }
 
