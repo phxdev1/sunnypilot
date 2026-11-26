@@ -15,6 +15,7 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD, get_sanitize_int_param
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MAP_DATA_AGE, LIMIT_ADAPT_ACC
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Policy, OffsetType
+from openpilot.sunnypilot.canopy.speed_offsets import LearnedSpeedOffsets
 
 SpeedLimitSource = custom.LongitudinalPlanSP.SpeedLimit.Source
 
@@ -67,6 +68,9 @@ class SpeedLimitResolver:
       self.params
     )
     self.offset_value = self.params.get("SpeedLimitValueOffset", return_default=True)
+    # Canopy: per-limit offsets learned from Mark's drives (Forge writes the file after each drive)
+    self.learned_offsets = LearnedSpeedOffsets()
+    self.learned_offsets.refresh()
 
     self.speed_limit = 0.
     self.speed_limit_last = 0.
@@ -95,8 +99,13 @@ class SpeedLimitResolver:
       self.is_metric = self.params.get_bool("IsMetric")
       self.offset_type = self.params.get("SpeedLimitOffsetType", return_default=True)
       self.offset_value = self.params.get("SpeedLimitValueOffset", return_default=True)
+      self.learned_offsets.refresh()
 
   def _get_speed_limit_offset(self) -> float:
+    limit_mph = self.speed_limit * CV.MS_TO_MPH
+    if not self.is_metric and self.learned_offsets.has(limit_mph):
+      return float(self.learned_offsets.offset_mph(limit_mph) * CV.MPH_TO_MS)
+
     if self.offset_type == OffsetType.off:
       return 0
     elif self.offset_type == OffsetType.fixed:
