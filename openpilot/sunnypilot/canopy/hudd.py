@@ -17,6 +17,11 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
   DELETE /banner?source=NAME   the status banner on the comma screen (canopy/banner.py).
                Changes also go out on /events as {"type": "banner", "banner": {...} | null},
                so the car app can follow the same state.
+  POST /voice_merge {"side": "left"|"right", "id"?}  Zia heard "merge left/right". Answers {"ok", "verdict", "mph", "live"} at once:
+               verdict "ok" (written to /dev/shm/canopy/voice_merge.json for the controls to act on), "too_slow" (under 25 mph),
+               "too_fast" (50 mph and up: the blinker does it), "steering_off", or "no_frame" (nothing to check against: still written).
+  /events also carries {"type": "voice_merge", "phase", "side", "reason"?, "signaled"?, "live", ...} each time the controls
+               report a voice merge step (heard, would_start, start, cancel, expired), from /dev/shm/canopy/voice_merge_state.json.
   GET /garage  live garage parking state (also on /events as {"type": "garage", ...}, 2/s
                at most while parking, one final {"active": false, "reason"} at the end).
   /events also carries {"type": "cue", "slot", "sound": "custom"|"stock"|"silent", "played", "mph",
@@ -56,6 +61,9 @@ from openpilot.sunnypilot.canopy import sounds as canopy_sounds
 
 PORT = int(os.environ.get("CANOPY_HUD_PORT", "8870"))
 OFF_FLAG = "/data/canopy/hud_off"
+VOICE_FILE = os.path.join(banner.BANNER_DIR, "voice_merge.json")
+VOICE_STATE = os.path.join(banner.BANNER_DIR, "voice_merge_state.json")
+VOICE_LIVE = "/data/canopy/voice_merge_live"
 HZ = 10
 MS_TO_MPH = 2.23694
 _ASP = custom.SelfdriveStateSP.AudibleAlert
@@ -91,6 +99,7 @@ _last = {"frame": None, "t": 0.0}
 _lead = {"state": False, "since": None}
 _banner = {"mtime": None, "last": None}
 _garage = {"mtime": None}
+_voice = {"mtime": None}
 GARAGE_LIVE = os.path.join(banner.BANNER_DIR, "garage_live.json")
 
 
@@ -115,6 +124,38 @@ def garage_event():
   if st is None:
     return None
   return json.dumps(dict(st, type="garage"), separators=(",", ":"))
+
+
+def voice_event():
+  """One "voice_merge" event each time the controls write a new voice merge step."""
+  try:
+    m = os.path.getmtime(VOICE_STATE)
+  except OSError:
+    return None
+  if m == _voice["mtime"]:
+    return None
+  _voice["mtime"] = m
+  try:
+    with open(VOICE_STATE) as f:
+      st = json.load(f)
+  except (OSError, ValueError):
+    return None
+  if not isinstance(st, dict):
+    return None
+  return json.dumps(dict(st, type="voice_merge"), separators=(",", ":"))
+
+
+def voice_verdict(frame, age_s) -> str:
+  if frame is None or age_s > 1.0:
+    return "no_frame"
+  if frame.get("steering") is not True:
+    return "steering_off"
+  mph = frame.get("mph") or 0
+  if mph < 25:
+    return "too_slow"
+  if mph >= 50:
+    return "too_fast"
+  return "ok"
 
 
 def banner_event():
@@ -390,7 +431,7 @@ def pump():
       next_banner = time.monotonic() + 0.5
       if _clients_ev and not os.path.exists(OFF_FLAG):
         try:
-          for ev in (banner_event(), garage_event()):
+          for ev in (banner_event(), garage_event(), voice_event()):
             if ev:
               publish(_clients_ev, ev)
         except Exception:
@@ -467,7 +508,32 @@ class H(BaseHTTPRequestHandler):
     self.wfile.write(body)
 
   def do_POST(self):
-    if self.path.split("?")[0] != "/banner":
+    path = self.path.split("?")[0]
+    if path == "/voice_merge":
+      try:
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > 2048:
+          return self._json(413, {"ok": False, "error": "too big"})
+        d = json.loads(self.rfile.read(n) or b"{}")
+      except (ValueError, OSError) as e:
+        return self._json(400, {"ok": False, "error": str(e)[:120]})
+      side = d.get("side") if isinstance(d, dict) else None
+      if side not in ("left", "right"):
+        return self._json(400, {"ok": False, "error": "side"})
+      frame = _last["frame"]
+      age = time.monotonic() - _last["t"] if frame else 1e9
+      verdict = voice_verdict(frame, age)
+      if verdict in ("ok", "no_frame"):
+        body = {"side": side, "t": time.time(), "id": str(d.get("id") or time.time())[:40]}
+        try:
+          with open(VOICE_FILE + ".tmp", "w") as f:
+            json.dump(body, f, separators=(",", ":"))
+          os.replace(VOICE_FILE + ".tmp", VOICE_FILE)
+        except OSError:
+          return self._json(500, {"ok": False, "error": "write"})
+      return self._json(200, {"ok": True, "verdict": verdict, "mph": frame.get("mph") if frame else None,
+                              "live": os.path.exists(VOICE_LIVE)})
+    if path != "/banner":
       return self._json(404, {"ok": False})
     try:
       n = int(self.headers.get("Content-Length") or 0)
