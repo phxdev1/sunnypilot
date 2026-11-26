@@ -9,6 +9,9 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
   GET /hud     Server-Sent Events, about 10 frames/s while a client is connected.
   GET /events  Server-Sent Events, only when something happens (engage, lead, stop, intent).
   GET /health  one JSON line.
+  /hud frame "v": 2 adds "lead.mph" (lead car speed over the ground) and "nav_lanes": the nav lane strip
+               (lanes, current, target, confident) passed through from /dev/shm/canopy/nav_lanes.json while
+               that file is under 2 s old, else null. The nav side writes it; hudd never guesses lanes.
   GET /banner, POST /banner {"source","text","style":"info"|"heads_up","timeout_s"},
   DELETE /banner?source=NAME   the status banner on the comma screen (canopy/banner.py).
                Changes also go out on /events as {"type": "banner", "banner": {...} | null},
@@ -110,6 +113,36 @@ def banner_event():
   return json.dumps({"type": "banner", "banner": b, "t": _r(time.time(), 2)}, separators=(",", ":"))
 
 
+NAV_LANES = os.path.join(banner.BANNER_DIR, "nav_lanes.json")
+NAV_MAX_AGE_S = 2.0
+_nav = {"mtime": None, "data": None}
+
+
+def nav_lanes():
+  """The nav lane strip as the nav side wrote it, only while fresh. Checked by mtime, so a 10 Hz
+  stream costs a stat() call, not a JSON parse, unless the file changed."""
+  try:
+    st = os.stat(NAV_LANES)
+  except OSError:
+    return None
+  if time.time() - st.st_mtime > NAV_MAX_AGE_S:
+    return None
+  key = (st.st_mtime_ns, st.st_size, st.st_ino)
+  if key != _nav["mtime"]:
+    _nav["mtime"] = key
+    try:
+      with open(NAV_LANES) as f:
+        d = json.load(f)
+      lanes = d.get("lanes")
+      _nav["data"] = {"lanes": int(lanes) if lanes is not None else None,
+                      "current": d.get("current"), "target": d.get("target"),
+                      "confident": bool(d.get("confident")),
+                      "reason": str(d.get("reason") or "")[:48] or None} if isinstance(d, dict) else None
+    except (OSError, ValueError, TypeError):
+      _nav["data"] = None
+  return _nav["data"]
+
+
 def _r(v, n=2):
   return round(float(v), n)
 
@@ -138,6 +171,7 @@ def build_frame(sm) -> dict:
   rs = sm["radarState"]
   lead = rs.leadOne
   f = {
+    "v": 2,
     "t": _r(time.time(), 2),
     "mph": _r(cs.vEgo * MS_TO_MPH, 1),
     "engaged": bool(ss.enabled),
@@ -158,9 +192,11 @@ def build_frame(sm) -> dict:
     "brake_soon": _r(max(md.meta.disengagePredictions.brake3MetersPerSecondSquaredProbs or [0])),
     "alert": ss.alertText1 or None,
     "sound": int(ss.alertSound.raw),
+    "nav_lanes": nav_lanes(),
   }
   if lead.present:
     f["lead"] = {"m": _r(lead.dRel, 1), "y": _r(lead.yRel, 2), "rel_mph": _r(lead.vRel * MS_TO_MPH, 1),
+                 "mph": _r(max(lead.vLead, 0.0) * MS_TO_MPH, 1),
                  "from_radar": bool(lead.radar)}
   return f
 
