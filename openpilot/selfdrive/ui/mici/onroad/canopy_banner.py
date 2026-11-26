@@ -15,7 +15,7 @@ from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
 
-WICK = Path(__file__).resolve().parents[3] / "sunnypilot/selfdrive/assets/images/canopy/Wick-Regular.ttf"
+WICK = Path(__file__).resolve().parents[4] / "sunnypilot/selfdrive/assets/images/canopy/Wick-Regular.ttf"
 
 FONT_SIZE = 30
 PAD_X = 22
