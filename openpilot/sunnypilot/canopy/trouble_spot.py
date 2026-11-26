@@ -15,10 +15,18 @@ Shadow only: the set-speed trim. It works out what it would target going in (TRI
 speed or the map limit, whichever is lower; it only ever lowers, never sets above the limit, and the
 brake wins) and logs one row per approach next to what he actually did, to
 /data/canopy/trouble_shadow.jsonl. Nothing here presses a button or changes a target.
+
+Path mode: the comma's own Look Ahead view (/dev/shm/canopy_lookahead.json, written once a second by
+canopy_hudd) says where his road actually goes. When a spot sits within LA_MATCH_M of a point on that
+path and that point is between MIN_AHEAD_M and reach along it, the heads-up may fire even around a
+curve or a turn, where the straight-ahead bearing check fails. This only goes live when the gate
+("look_ahead_comma", scoped by the path source) says so; otherwise each approach logs one shadow row
+to /data/canopy/lookahead_cue_shadow.jsonl and nothing is posted.
 """
 import json
 import math
 import os
+import threading
 import time
 
 from openpilot.sunnypilot.canopy import banner
@@ -44,6 +52,14 @@ TRIM_MPH = 3.0
 GARAGE_SKIP_M = 150.0
 RELOAD_S = 30.0
 BANNER_S = 8.0
+
+LOOKAHEAD_PATH = "/dev/shm/canopy_lookahead.json"
+LOOKAHEAD_OFF = "/data/canopy/lookahead_off"
+LA_SHADOW_PATH = "/data/canopy/lookahead_cue_shadow.jsonl"
+LA_FEATURE = "look_ahead_comma"
+LA_MAX_AGE_S = 3.0
+LA_MATCH_M = 40.0
+LA_RECHECK_S = 0.5      # hudd rewrites the view once a second; stat it at most this often
 
 
 def dist_m(lat1, lon1, lat2, lon2) -> float:
@@ -73,16 +89,31 @@ def would_target(v_cruise: float, limit: float | None) -> float:
 
 class TroubleSpots:
   def __init__(self, path: str = SPOTS_PATH, garage_path: str = GARAGE_PATH, shadow_path: str | None = SHADOW_PATH,
-               post=banner.post):
+               post=banner.post, lookahead_path: str = LOOKAHEAD_PATH, off_flag: str = LOOKAHEAD_OFF,
+               la_shadow_path: str | None = LA_SHADOW_PATH, gates=None):
     self.path, self.garage_path, self.shadow_path = path, garage_path, shadow_path
     self._post = post
+    self.lookahead_path, self.off_flag, self.la_shadow_path = lookahead_path, off_flag, la_shadow_path
+    if gates is None:
+      try:
+        from openpilot.sunnypilot.canopy.gates import Gates
+        gates = Gates()
+        threading.Thread(target=gates.snapshot, daemon=True).start()
+      except Exception:
+        gates = None
+    self.gates = gates
     self.spots = []
     self._mtime = None
     self._check_t = -1e9
     self._last_fire = {}
+    self._la_shadow_last = {}  # shadow-only path rearm; keeps off the live cue's clock
     self.zone = None        # the approach being watched
     self.last_fire = None   # dict for the caller to log
     self.last_row = None    # finished shadow row
+    self._la_cond = None    # the gate cell at the last live path fire
+    self._la_view = None    # the last parsed Look Ahead view
+    self._la_mtime = None   # and the file mtime it came from
+    self._la_stat_t = -1e9  # when we last stat'ed the file
 
   def _load(self, now):
     if now - self._check_t < RELOAD_S:
@@ -128,6 +159,86 @@ class TroubleSpots:
           f.write(json.dumps(row, separators=(",", ":")) + "\n")
       except OSError:
         pass
+    if z.get("via") == "path" and z.get("took_over") is True:
+      if self.gates is not None and self._la_cond is not None:
+        try:
+          self.gates.demote(LA_FEATURE, self._la_cond, "takeover")
+        except Exception:
+          pass
+    self._la_cond = None
+
+  def _path_view(self, now, wall):
+    """The comma's last Look Ahead view, or None if off, stale or unreadable.
+
+    update() runs at the planner rate and hudd rewrites the file once a second, so stat it at most
+    every LA_RECHECK_S and re-parse only when the mtime moved. The off flag and the age check still
+    run on every call, against the cached view.
+    """
+    try:
+      if os.path.exists(self.off_flag):
+        return None
+    except OSError:
+      return None
+    if now - self._la_stat_t >= LA_RECHECK_S:
+      self._la_stat_t = now
+      try:
+        mt = os.stat(self.lookahead_path).st_mtime
+      except OSError:
+        self._la_view, self._la_mtime = None, None
+        return None
+      if mt != self._la_mtime:
+        self._la_mtime = mt
+        try:
+          with open(self.lookahead_path) as f:
+            view = json.load(f)
+        except (OSError, ValueError, TypeError):
+          view = None
+        self._la_view = view if isinstance(view, dict) else None
+    view = self._la_view
+    if not isinstance(view, dict):
+      return None
+    try:
+      ts = float(view["ts"])
+    except (KeyError, TypeError, ValueError):
+      return None
+    if wall - ts > LA_MAX_AGE_S:
+      return None
+    return view
+
+  def _path_hits(self, view, reach):
+    """Spots the path runs past, with how far along the path they sit."""
+    for s in self.spots:
+      for it in view.get("items") or []:
+        if not isinstance(it, dict):
+          continue
+        la, lo = it.get("lat"), it.get("lon")
+        if la is None or lo is None:
+          continue
+        try:
+          if dist_m(s["lat"], s["lon"], float(la), float(lo)) > LA_MATCH_M:
+            continue
+        except (TypeError, ValueError):
+          continue
+        try:
+          along = float(it.get("along_m"))
+        except (TypeError, ValueError):
+          break
+        if MIN_AHEAD_M <= along <= reach:
+          yield s, along
+        break
+
+  def _log_path_shadow(self, s, along, view, v_ego, wall):
+    if not self.la_shadow_path:
+      return
+    row = {"t": round(wall, 1), "spot": s["id"], "along_m": round(along), "source": view.get("source"),
+           "path_conf": view.get("path_conf"), "mph": round(v_ego * MS_TO_MPH, 1), "live": False,
+           "spot_lat": round(s["lat"], 6), "spot_lon": round(s["lon"], 6)}
+    try:
+      os.makedirs(os.path.dirname(self.la_shadow_path), exist_ok=True)
+      with open(self.la_shadow_path, "a") as f:
+        f.write(json.dumps(row, separators=(",", ":")) + "\n")
+    except OSError:
+      pass
 
   def _watch(self, gps, car_state, v_ego, engaged, lat_active, now, wall):
     z = self.zone
@@ -145,6 +256,25 @@ class TroubleSpots:
       self._finish("passed" if not ahead else "timeout", wall)
       return True
     return False
+
+  def _fire(self, s, d, via, v_ego, v_cruise, limit, engaged, lat_active, now, wall):
+    """Arm the approach watch, note the fire and post the banner."""
+    self._last_fire[s["id"]] = now
+    wt = would_target(v_cruise, limit) if v_cruise > 0 else None
+    self.zone = {"spot": s["id"], "count": s["count"], "label": s["label"], "via": via,
+                 "t_fire": round(wall, 1),
+                 "dist_at_fire_m": d, "mph_at_fire": v_ego * MS_TO_MPH, "set_mph": v_cruise * MS_TO_MPH,
+                 "limit_mph": (limit * MS_TO_MPH) if limit else None,
+                 "would_set_mph": (wt * MS_TO_MPH) if wt is not None else None,
+                 "min_mph": v_ego * MS_TO_MPH, "min_dist_m": d, "brake": False, "wheel": False,
+                 "took_over": False, "engaged_at_fire": bool(engaged and lat_active),
+                 "_lat": s["lat"], "_lon": s["lon"], "_t": now}
+    self.last_fire = {"spot": s["id"], "count": s["count"], "label": s["label"], "via": via,
+                      "dist_m": round(d), "mph": round(v_ego * MS_TO_MPH, 1)}
+    try:
+      self._post(SOURCE, TEXT, "heads_up", BANNER_S)
+    except Exception:
+      pass
 
   def update(self, gps, car_state, v_ego: float, engaged: bool, lat_active: bool, v_cruise: float,
              limit: float | None, now: float | None = None, wall: float | None = None) -> bool:
@@ -177,20 +307,34 @@ class TroubleSpots:
         continue
       if now - self._last_fire.get(s["id"], -1e9) < REARM_S:
         continue
-      self._last_fire[s["id"]] = now
-      wt = would_target(v_cruise, limit) if v_cruise > 0 else None
-      self.zone = {"spot": s["id"], "count": s["count"], "label": s["label"], "t_fire": round(wall, 1),
-                   "dist_at_fire_m": d, "mph_at_fire": v_ego * MS_TO_MPH, "set_mph": v_cruise * MS_TO_MPH,
-                   "limit_mph": (limit * MS_TO_MPH) if limit else None,
-                   "would_set_mph": (wt * MS_TO_MPH) if wt is not None else None,
-                   "min_mph": v_ego * MS_TO_MPH, "min_dist_m": d, "brake": False, "wheel": False,
-                   "took_over": False, "engaged_at_fire": bool(engaged and lat_active),
-                   "_lat": s["lat"], "_lon": s["lon"], "_t": now}
-      self.last_fire = {"spot": s["id"], "count": s["count"], "label": s["label"], "dist_m": round(d),
-                        "mph": round(v_ego * MS_TO_MPH, 1)}
-      try:
-        self._post(SOURCE, TEXT, "heads_up", BANNER_S)
-      except Exception:
-        pass
+      self._fire(s, d, "line", v_ego, v_cruise, limit, engaged, lat_active, now, wall)
       return True
+
+    # Nothing straight ahead: let the local Look Ahead path carry the heads-up round a curve or a turn.
+    view = self._path_view(now, wall)
+    if view is None or self.gates is None:
+      return False
+    try:
+      cond = self.gates.conditions(lat, lon, wall, v_ego * MS_TO_MPH, (limit * MS_TO_MPH) if limit else None)
+      cond = dict(cond)
+    except Exception:
+      return False
+    cond["path_source"] = view.get("source")
+    try:
+      live = bool(self.gates.is_live(LA_FEATURE, cond, float(view.get("path_conf") or 0.0)))
+    except Exception:
+      live = False
+    for s, along in self._path_hits(view, reach):
+      if live:
+        if now - self._last_fire.get(s["id"], -1e9) < REARM_S:
+          continue
+        self._la_cond = cond
+        self._fire(s, along, "path", v_ego, v_cruise, limit, engaged, lat_active, now, wall)
+        return True
+      # Shadow changes nothing live: its own rearm, never _last_fire, so the line cue still gets its say.
+      if now - self._la_shadow_last.get(s["id"], -1e9) < REARM_S:
+        continue
+      self._log_path_shadow(s, along, view, v_ego, wall)
+      self._la_shadow_last[s["id"]] = now
     return False
+
