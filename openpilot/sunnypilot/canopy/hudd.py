@@ -27,7 +27,7 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
                from canopy/leadkind.py: one look-up per new lead track, only while a client is connected.
                The plate is for the live screen only: it is never on /events, never logged, and dropped when
                the lead changes. Draw a generic car when kind is "unknown" or missing.
-  /events also carries {"type": "drive", ...} at about 10 Hz for car app 0.15.11's drive view: path, lanes,
+  /events also carries {"type": "drive", ...} for the car app's drive view, thinned like /hud: path, lanes,
                edges, lead and the nav strip with y positive to the RIGHT, rounded to 0.1 m (see drive_event).
                It never carries the plate. Only for clients that want it (see wants_drive): ?drive=1 or ?drive=0,
                and python or curl clients like Zia don't get it by default.
@@ -332,6 +332,7 @@ HUD_MIN_S = 0.2    # /hud at most 5 frames/s for geometry changes (car app LTE, 
 HUD_KEEP_S = 0.5   # and at least 2/s, under the car app's 1 s stale mark
 HUD_MOVE_M = 0.1   # path, lanes, edges or lead must move this much to count as changed
 _hud_sent = {"frame": None, "t": 0.0}
+_drive_sent = {"frame": None, "t": 0.0}  # the drive event on /events is thinned the same way
 _HUD_SKIP = {"t", "path", "lanes", "edges", "lead", "mph"}
 
 
@@ -415,7 +416,8 @@ def pump():
     if _clients_hud and hud_due(_hud_sent, cur, now):
       _hud_sent["frame"], _hud_sent["t"] = cur, now
       publish(_clients_hud, json.dumps(cur, separators=(",", ":")))
-    if any(getattr(q, "drive", False) for q in _clients_ev):
+    if any(getattr(q, "drive", False) for q in _clients_ev) and hud_due(_drive_sent, cur, now):
+      _drive_sent["frame"], _drive_sent["t"] = cur, now
       try:
         lp = _r(sm["radarState"].leadOne.modelProb) if cur["lead"] else None
         publish_lossy(_clients_ev, json.dumps(drive_event(cur, lp), separators=(",", ":")))
