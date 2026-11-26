@@ -363,6 +363,7 @@ struct OnroadEventSP @0xda96579883444c35 {
     canopyRampMeter @26;
     canopyMoveOver @27;
     canopyLaneDrop @28;
+    canopyLaneExit @29;
   }
 }
 

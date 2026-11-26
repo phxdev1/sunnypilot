@@ -242,6 +242,30 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 4.),
   },
 
+  EventNameSP.canopyMoveOver: {
+    ET.PERMANENT: Alert(
+      "On-ramp merging ahead",
+      "Left lane is clear, tap the blinker to move over",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 4.),
+  },
+
+  EventNameSP.canopyLaneDrop: {
+    ET.PERMANENT: Alert(
+      "Right lane ends ahead",
+      "Tap the left blinker to move over when it's clear",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 4.),
+  },
+
+  EventNameSP.canopyLaneExit: {
+    ET.PERMANENT: Alert(
+      "Right lane exits ahead",
+      "Tap the left blinker to stay on the freeway",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 4.),
+  },
+
   EventNameSP.e2eChime: {
     ET.PERMANENT: Alert(
       "",

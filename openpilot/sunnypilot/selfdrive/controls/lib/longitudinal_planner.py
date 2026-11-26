@@ -17,6 +17,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist 
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_resolver import SpeedLimitResolver
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
 from openpilot.sunnypilot.models.helpers import get_active_bundle
+from openpilot.sunnypilot.canopy.move_over import MoveOver
+from openpilot.sunnypilot.canopy.lane_drop import LaneDrop
+from openpilot.common.swaglog import cloudlog
 
 LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
 
@@ -31,6 +34,8 @@ class LongitudinalPlannerSP:
     self.generation = int(model_bundle.generation) if (model_bundle := get_active_bundle()) else None
     self.source = LongitudinalPlanSource.cruise
     self.e2e_alerts_helper = E2EAlertsHelper()
+    self.move_over = MoveOver()
+    self.lane_drop = LaneDrop()
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
 
@@ -56,6 +61,20 @@ class LongitudinalPlannerSP:
     # Canopy: one chime as a ramp meter's light comes up (ProPILOT won't stop for it on its own)
     if self.resolver.ramp_meter.chime:
       self.events_sp.add(custom.OnroadEventSP.EventName.canopyRampMeter)
+
+    # Canopy: right lane at an on-ramp merge, left clear: one chime to move over (his blinker tap does it)
+    try:
+      map_data = sm['liveMapDataSP']
+      gps = sm[self.resolver._gps_location_service]
+      map_limit = map_data.speedLimit if map_data.speedLimitValid else 0.
+      if self.move_over.update(gps, sm['modelV2'], CS, v_ego, map_limit):
+        self.events_sp.add(custom.OnroadEventSP.EventName.canopyMoveOver)
+      # Canopy: right lane ends or turns into an exit ahead: one chime ~20 s out
+      if self.lane_drop.update(gps, sm['modelV2'], CS, v_ego, map_limit):
+        self.events_sp.add(custom.OnroadEventSP.EventName.canopyLaneExit if self.lane_drop.kind == LaneDrop.EXITS
+                           else custom.OnroadEventSP.EventName.canopyLaneDrop)
+    except Exception:  # a prompt must never take the planner down
+      cloudlog.exception("canopy lane prompts failed")
 
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp)

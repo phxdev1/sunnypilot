@@ -51,21 +51,21 @@ class RampMeters:
     except (OSError, ValueError, KeyError, TypeError):
       self.meters = []
 
-  def ahead(self, lat: float, lon: float, heading: float):
-    """(index, along-track metres) of the nearest meter on our path, or None."""
+  def ahead(self, lat: float, lon: float, heading: float, max_ahead: float = AHEAD_M, max_cross: float = CROSS_M):
+    """(index, along-track metres) of the nearest point on our path, or None."""
     best = None
     m_per_deg_lon = 111320. * math.cos(math.radians(lat))
     h = math.radians(heading)
     fx, fy = math.sin(h), math.cos(h)  # east, north
-    span = (AHEAD_M + 50.) / M_PER_DEG_LAT
+    span = (max_ahead + 50.) / M_PER_DEG_LAT
     for i, (mlat, mlon, mbrg) in enumerate(self.meters):
-      if abs(mlat - lat) > span or abs(mlon - lon) * m_per_deg_lon > AHEAD_M + 50.:
+      if abs(mlat - lat) > span or abs(mlon - lon) * m_per_deg_lon > max_ahead + 50.:
         continue
       if abs((heading - mbrg + 180.) % 360. - 180.) > HEADING_DEG:
         continue
       dx, dy = (mlon - lon) * m_per_deg_lon, (mlat - lat) * M_PER_DEG_LAT
       along, cross = dx * fx + dy * fy, abs(dx * fy - dy * fx)
-      if -PAST_M <= along <= AHEAD_M and cross <= CROSS_M and (best is None or along < best[1]):
+      if -PAST_M <= along <= max_ahead and cross <= max_cross and (best is None or along < best[1]):
         best = (i, along)
     return best
 

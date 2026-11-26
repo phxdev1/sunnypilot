@@ -12,6 +12,7 @@ from openpilot.common.constants import CV
 from openpilot.common.gps import get_gps_location_service
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
+from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD, get_sanitize_int_param
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MAP_DATA_AGE, LIMIT_ADAPT_ACC
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Policy, OffsetType
@@ -228,7 +229,11 @@ class SpeedLimitResolver:
     except KeyError:
       gps, map_data = None, None
     map_limit = map_data.speedLimit if map_data is not None and map_data.speedLimitValid else 0.
-    self.ramp_meter.update(gps, self.v_ego, map_limit)
+    try:
+      self.ramp_meter.update(gps, self.v_ego, map_limit)
+    except Exception:  # never take the planner down; just don't hold
+      cloudlog.exception("canopy ramp meter failed")
+      self.ramp_meter.holding = self.ramp_meter.chime = False
 
   def _apply_ramp_meter_hold(self) -> None:
     """While a ramp meter is ahead, the limit can drop but never rise above where it stood."""
