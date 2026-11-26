@@ -18,6 +18,11 @@ that side, and stops after MAX_HOLD_CHANGES.
 On screen: while in an exit zone, a small Canopy banner says the exit lane is known ("hold right
 for the exit lane", then "in the exit lane"). No banner means a held blinker gets one change only.
 hudd streams the same banner to the head unit.
+
+A turn is not a merge (Mark, Nov 26): if the car turns or slows to turning speed after a lane change
+starts (heading swung TURN_DEG or more, or speed under TURN_SPEED), it was a turn the blinker was
+signalling, not a merge, so no blinker-off chime follows it. The comma has no nav, so these stand in
+for "nav predicted a turn"; Forge applies the nav rule itself to every count (nav_turns.py).
 """
 import json
 import math
@@ -41,6 +46,8 @@ BLINKER_HOLD = int(0.8 / DT_MDL)  # the Leaf's signal flashes; treat it as on th
 CHIME_AFTER_S = 2.0
 CHIME_AGAIN_S = 10.0
 HOLD_WAIT_S = 9.0       # in an exit zone, no next change for this long: it has stopped, chime
+TURN_DEG = 40.          # heading swing since the change started that makes it a turn
+TURN_SPEED = 11.        # m/s (~25 mph): slowed to turning speed with the blinker still on
 M_PER_DEG_LAT = 110540.
 BANNER_ZONE = "Exit lane known: hold right to reach it"
 BANNER_EDGE = "In the exit lane"
@@ -124,6 +131,8 @@ class LaneHold:
     self._pending = None      # direction of the change that just ended while the blinker stayed on
     self._t = 0.
     self._chimes = 0
+    self._h0 = None           # heading when the change started
+    self.turned = 0           # changes that turned out to be turns (no chime)
     self._frame = 0
     self._nav_on = False
     self.merge_cue = ""       # "left" or "right" on the frame a lane change starts, else ""
@@ -153,6 +162,13 @@ class LaneHold:
       os.replace(tmp, NAV_LANES)
     except OSError:
       pass
+
+  def _is_turn(self, gps, has_fix: bool, v_ego: float) -> bool:
+    if v_ego < TURN_SPEED:
+      return True
+    if self._h0 is None or not has_fix:
+      return False
+    return abs((gps.bearingDeg - self._h0 + 180.) % 360. - 180.) >= TURN_DEG
 
   def update(self, gps, model, car_state, v_ego: float) -> bool:
     """True for one update when the blinker-off chime should play."""
@@ -195,10 +211,14 @@ class LaneHold:
       d = "left" if direction == LaneChangeDirection.left else "right"
       if self._prev_state != LaneChangeState.laneChangeStarting:
         self.merge_cue = d
+        self._h0 = gps.bearingDeg if has_fix else None
       self._dir = d
     elif self._prev_state == LaneChangeState.laneChangeStarting and self._dir:
       self._pending, self._t, self._chimes = self._dir, 0., 0
     self._prev_state = state
+
+    if self._pending is not None and self._is_turn(gps, has_fix, v_ego):
+      self._pending, self.turned = None, self.turned + 1  # a turn, not a merge: no chime
 
     if self._pending is not None:
       still_on = left_on if self._pending == "left" else right_on
