@@ -370,7 +370,7 @@ def main(demo=False):
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
-  DH.enable_bsm = has_bsm(CP, None)  # CP.enableBsm is deprecated in this opendbc
+  DH.enable_bsm = has_bsm(CP, None) or CP.carFingerprint in ("NISSAN_LEAF", "NISSAN_LEAF_IC")  # Canopy: Leaf blind spot via 0x3F0
   meta_constants = load_meta_constants()
   RELC = RoadEdgeLaneChangeController()
   blendful = Blendful()

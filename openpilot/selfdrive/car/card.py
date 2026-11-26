@@ -24,6 +24,7 @@ from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_cap
 
 from openpilot.sunnypilot.mads.helpers import set_alternative_experience, set_car_specific_params
 from openpilot.sunnypilot.selfdrive.car import interfaces as sunnypilot_interfaces
+from openpilot.sunnypilot.canopy.leaf_bsm import LeafBlindspot
 
 REPLAY = "REPLAY" in os.environ
 
@@ -122,6 +123,8 @@ class Car:
       self.CI, self.CP, self.CP_SP = CI, CI.CP, CI.CP_SP
       self.RI = RI
 
+    self.leaf_bsm = LeafBlindspot() if self.CP.carFingerprint in ("NISSAN_LEAF", "NISSAN_LEAF_IC") else None
+
     self.CP.alternativeExperience = 0
     # mads
     set_alternative_experience(self.CP, self.CP_SP, self.params)
@@ -192,6 +195,11 @@ class Car:
     # Update carState from CAN
     CS, CS_SP = self.CI.update(can_list)
     CS_SP = convert_to_capnp(CS_SP)
+
+    # Canopy: Leaf blind spot from the rear side radars (0x3F0); unknown reads occupied
+    if self.leaf_bsm is not None:
+      self.leaf_bsm.update(can_list)
+      CS.leftBlindspot, CS.rightBlindspot = self.leaf_bsm.sides()
 
     # Update radar tracks from CAN
     RD: structs.RadarDataT | None = self.RI.update(can_list)
