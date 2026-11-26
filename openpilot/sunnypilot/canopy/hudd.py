@@ -26,6 +26,9 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
                from canopy/leadkind.py: one look-up per new lead track, only while a client is connected.
                The plate is for the live screen only: it is never on /events, never logged, and dropped when
                the lead changes. Draw a generic car when kind is "unknown" or missing.
+  /events also carries {"type": "drive", ...} at about 10 Hz for the car app's drive view: path, lanes,
+               edges, lead and the nav strip with y positive to the RIGHT, rounded to 0.1 m (see drive_event).
+               It never carries the plate.
 
 Frame coordinates are the car frame in meters: x forward, y left-positive (model y is
 flipped here so path, lanes, edges and the radar lead all agree).
@@ -230,6 +233,40 @@ def build_frame(sm) -> dict:
   return f
 
 
+def _rt(pts):
+  """[[x, y_left]] to the car app's [[x, y_right]], 0.1 m."""
+  return [[round(x, 1), round(-y, 1)] for x, y in pts]
+
+
+def drive_event(cur, lead_p) -> dict:
+  """The car app's calm drive view (car app 0.15.11 contract): y positive to the RIGHT, 0.1 m, ~10 Hz on /events.
+  No plate here: /events may be logged by other listeners."""
+  xs = cur["lane_x"]
+  lead = cur["lead"]
+  nav = cur["nav_lanes"]
+  strip = None
+  if nav and isinstance(nav.get("lanes"), int) and nav["lanes"] > 0:
+    n = nav["lanes"]
+
+    def idx(v):
+      if isinstance(v, int):
+        return v
+      return {"rightmost": n - 1, "leftmost": 0}.get(v)
+    strip = {"n": n, "cur": idx(nav.get("current")), "target": idx(nav.get("target")), "confident": nav["confident"]}
+  return {
+    "type": "drive", "t": cur["t"], "engaged": cur["steering"] or cur["engaged"], "mph": cur["mph"],
+    "path": _rt(cur["path"]),
+    "lanes": [{"pts": _rt(zip(xs, l["y"])), "p": l["p"]} for l in cur["lanes"]],
+    "edges": [_rt(zip(xs, e)) for e in cur["edges"]],
+    "lead": None if lead is None else {
+      "d_m": round(lead["m"], 1), "y_m": round(-lead["y"], 1), "v_rel_mph": lead["rel_mph"], "p": lead_p,
+      "cls": "other" if lead["kind"] in (None, "unknown") else lead["kind"],
+      "cls_p": lead["kind_conf"] if lead["kind"] not in (None, "unknown") else 0.0,
+      "make": lead["make"], "model": lead["model"], "color": lead["color"]},
+    "strip": strip,
+  }
+
+
 def no_plate(lead):
   """The plate goes to the live /hud screen only, never into /events (Zia and others may log those)."""
   return None if lead is None else {k: v for k, v in lead.items() if k != "plate"}
@@ -277,6 +314,17 @@ def publish(qs, item):
         pass  # slow client: drop frames rather than lag behind
 
 
+def publish_lossy(qs, item, keep_free=16):
+  """10 Hz drive events: skipped for a client that is falling behind, so cues and alerts always fit."""
+  with _lock:
+    for q in list(qs):
+      if q.maxsize - q.qsize() > keep_free:
+        try:
+          q.put_nowait(item)
+        except queue.Full:
+          pass
+
+
 def pump():
   sm = messaging.SubMaster(["modelV2", "carState", "selfdriveState", "radarState", "carControl",
                                 "liveCalibration", _GPS])
@@ -312,6 +360,12 @@ def pump():
       continue
     _last["frame"], _last["t"] = cur, now
     publish(_clients_hud, json.dumps(cur, separators=(",", ":")))
+    if _clients_ev:
+      try:
+        lp = _r(sm["radarState"].leadOne.modelProb) if cur["lead"] else None
+        publish_lossy(_clients_ev, json.dumps(drive_event(cur, lp), separators=(",", ":")))
+      except Exception:
+        pass
     for e in events_from(prev, cur):
       publish(_clients_ev, json.dumps(e, separators=(",", ":")))
     prev = cur
@@ -324,7 +378,7 @@ class H(BaseHTTPRequestHandler):
     pass
 
   def _sse(self, qs):
-    q: queue.Queue = queue.Queue(maxsize=5)
+    q: queue.Queue = queue.Queue(maxsize=5 if qs is _clients_hud else 20)
     with _lock:
       qs.append(q)
     try:
