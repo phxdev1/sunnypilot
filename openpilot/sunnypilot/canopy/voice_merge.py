@@ -10,11 +10,13 @@ import json
 import math
 import os
 import time
+import collections
 
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.canopy import params_file
+import collections
 
 VOICE_FILE = os.environ.get("CANOPY_VOICE_FILE", "/dev/shm/canopy/voice_merge.json")
 STATE_FILE = os.environ.get("CANOPY_VOICE_STATE", "/dev/shm/canopy/voice_merge_state.json")
@@ -38,6 +40,9 @@ LIVE_EVERY = 20
 LC_JUMP_THRESH = 2.0          # m, near-left line y jump between consecutive steps
 LC_PROB_THRESH = 0.3          # left_prob must exceed this on both sides of a completed LC
 OUTCOME_WINDOW_S = 8.0        # how long an outcome stays open
+LC_PROB_BEFORE_S = 3.0        # keep a short left_prob history before a jump for this long
+LC_PROB_AFTER_S = 2.0         # confirm a pending jump within this many seconds
+LC_CONFIRM_PROB = 0.5         # left_prob must exceed this at least once within LC_PROB_AFTER_S after a jump
 Z = 1.96                      # Wilson lower-bound z
 
 
@@ -129,6 +134,7 @@ class VoiceMerge:
     self._since_brake = NO_BRAKE_S
     self._prev_left_y = None
     self._prev_left_prob = None
+    self._pending_jump = None
     self.confidence = _load_confidence()
     self._outcome = None
     p = params_file.load()
@@ -230,6 +236,7 @@ class VoiceMerge:
       return
     o = self._outcome
     self._outcome = None
+    self._pending_jump = None
     side = o["side"]
     band = o["band"]
     live = o["live"]
@@ -264,6 +271,7 @@ class VoiceMerge:
       bd["live"] = False
       bd["pending_live"] = False
       _atomic_write_confidence(self.confidence)
+      self._pending_jump = None
       if band == "street":
         _set_band_flag("street", False)
         self.live = False
@@ -304,6 +312,10 @@ class VoiceMerge:
     openpilot frame (right is positive), or None."""
     self._frame += 1
     now = self._clock()
+    if lane_info is not None:
+      left_y, right_y, left_prob, right_prob = lane_info
+    else:
+      left_y = right_y = left_prob = right_prob = None
     self._since_brake = (
       0.0 if cs.brakePressed else min(self._since_brake + DT_MDL, NO_BRAKE_S)
     )
@@ -341,26 +353,48 @@ class VoiceMerge:
           )
 
     # --- Lane-change detector (runs every step while an outcome is open) ---
-    if lane_info is not None:
-      left_y, right_y, left_prob, right_prob = lane_info
-    else:
-      left_y = right_y = left_prob = right_prob = None
+    # A step change in near-left y over LC_JUMP_THRESH counts when left_prob
+    # exceeds LC_CONFIRM_PROB at least once within LC_PROB_AFTER_S AFTER the
+    # jump. No before-history is kept. Negative change = moved LEFT.
+    # A second jump in the opposite direction before confirmation cancels the
+    # pending one.
 
-    if self._outcome is not None and left_y is not None and left_prob is not None:
-      prev_y = self._prev_left_y
-      prev_prob = self._prev_left_prob
-      self._prev_left_y = left_y
-      self._prev_left_prob = left_prob
-      if prev_y is not None and prev_prob is not None:
-        jump = left_y - prev_y
-        if abs(jump) > LC_JUMP_THRESH and prev_prob > LC_PROB_THRESH and left_prob > LC_PROB_THRESH:
-          # Completed lane change detected
-          going_left = self._outcome["side"] == "left"
-          lc_left = jump < 0   # negative jump => car moved left one lane
-          if lc_left == going_left:
-            self._close_outcome(clean=True)
-          else:
-            self._close_outcome(clean=False)
+    if self._outcome is not None:
+      if left_y is not None and left_prob is not None:
+        if not self._pending_jump:
+          prev_y = self._prev_left_y
+          self._prev_left_y = left_y
+          if prev_y is not None:
+            jump = left_y - prev_y
+            if abs(jump) > LC_JUMP_THRESH:
+              # A line jump happened this step. Start a pending confirmation
+              # window; left_prob must exceed LC_CONFIRM_PROB within
+              # LC_PROB_AFTER_S after the jump. Negative change = moved LEFT.
+              self._pending_jump = (now, jump < 0)
+        else:
+          pend_at, pend_left = self._pending_jump
+          elapsed = now - pend_at
+          if elapsed > LC_PROB_AFTER_S:
+            self._pending_jump = None
+          elif left_prob > LC_CONFIRM_PROB:
+            # Confirmed: the line reappeared on the left within the window.
+            outcome_side_left = self._outcome["side"] == "left"
+            if pend_left == outcome_side_left:
+              self._close_outcome(clean=True)
+            else:
+              self._close_outcome(clean=False)
+            self._pending_jump = None
+          elif left_y is not None:
+            # A second jump in the opposite direction cancels the pending verdict.
+            if self._prev_left_y is not None:
+              njump = left_y - self._prev_left_y
+              if njump != 0 and (njump < 0) != pend_left:
+                self._pending_jump = None
+          self._prev_left_y = left_y
+          self._prev_left_prob = left_prob
+      else:
+        self._prev_left_y = left_y
+        self._prev_left_prob = left_prob
 
     # --- Check for brake press while an outcome is open ---
     if self._outcome is not None and cs.brakePressed:
