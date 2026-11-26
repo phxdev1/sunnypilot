@@ -13,6 +13,8 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
   DELETE /banner?source=NAME   the status banner on the comma screen (canopy/banner.py).
                Changes also go out on /events as {"type": "banner", "banner": {...} | null},
                so the car app can follow the same state.
+  GET /garage  live garage parking state (also on /events as {"type": "garage", ...}, 2/s
+               at most while parking, one final {"active": false, "reason"} at the end).
 
 Frame coordinates are the car frame in meters: x forward, y left-positive (model y is
 flipped here so path, lanes, edges and the radar lead all agree).
@@ -45,6 +47,31 @@ _lock = threading.Lock()
 _last = {"frame": None, "t": 0.0}
 _lead = {"state": False, "since": None}
 _banner = {"mtime": None, "last": None}
+_garage = {"mtime": None}
+GARAGE_LIVE = os.path.join(banner.BANNER_DIR, "garage_live.json")
+
+
+def garage_state():
+  try:
+    with open(GARAGE_LIVE) as f:
+      return json.load(f)
+  except (OSError, ValueError):
+    return None
+
+
+def garage_event():
+  """One "garage" event each time the live parking state changes (at most 2 a second)."""
+  try:
+    m = os.path.getmtime(GARAGE_LIVE)
+  except OSError:
+    return None
+  if m == _garage["mtime"]:
+    return None
+  _garage["mtime"] = m
+  st = garage_state()
+  if st is None:
+    return None
+  return json.dumps(dict(st, type="garage"), separators=(",", ":"))
 
 
 def banner_event():
@@ -162,9 +189,9 @@ def pump():
       next_banner = time.monotonic() + 0.5
       if _clients_ev and not os.path.exists(OFF_FLAG):
         try:
-          ev = banner_event()
-          if ev:
-            publish(_clients_ev, ev)
+          for ev in (banner_event(), garage_event()):
+            if ev:
+              publish(_clients_ev, ev)
         except Exception:
           pass
     if not sm.updated["modelV2"]:
@@ -254,6 +281,8 @@ class H(BaseHTTPRequestHandler):
     path = self.path.split("?")[0]
     if path == "/banner":
       return self._json(200, {"banner": banner.current()})
+    if path == "/garage":
+      return self._json(200, {"garage": garage_state()})
     if path == "/hud":
       return self._sse(_clients_hud)
     if path == "/events":

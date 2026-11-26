@@ -17,6 +17,7 @@ No file, no banner.
 """
 import json
 import math
+import os
 import time
 
 from openpilot.sunnypilot.canopy import banner
@@ -37,6 +38,8 @@ REVERSE_S = 2.0
 REFRESH_S = 20.0
 BANNER_TIMEOUT_S = 45.0
 CONFIG_RETRY_S = 30.0
+LIVE_HZ = 2.0
+LIVE_PATH = os.path.join(banner.BANNER_DIR, "garage_live.json")
 
 
 def dist_m(lat1, lon1, lat2, lon2) -> float:
@@ -58,8 +61,10 @@ def _gear(car_state) -> str:
 
 
 class GaragePark:
-  def __init__(self, path: str = GARAGE_PATH, post=banner.post, clear=banner.clear):
+  def __init__(self, path: str = GARAGE_PATH, post=banner.post, clear=banner.clear, live_path: str | None = LIVE_PATH):
     self.path = path
+    self.live_path = live_path
+    self._live_t = -1e9
     self._post, self._clear = post, clear
     self.cfg = None
     self._cfg_t = -1e9
@@ -84,10 +89,25 @@ class GaragePark:
     except (OSError, ValueError, KeyError, TypeError):
       self.cfg = None
 
+  def _live(self, now, wall, force=False, **state):
+    """Live parking state for the car screen (hudd sends it as "garage" events). No coordinates."""
+    if self.live_path is None or (not force and now - self._live_t < 1.0 / LIVE_HZ):
+      return
+    self._live_t = now
+    try:
+      os.makedirs(os.path.dirname(self.live_path), exist_ok=True)
+      tmp = self.live_path + ".tmp"
+      with open(tmp, "w") as f:
+        json.dump(dict(state, t=round(wall, 2)), f, separators=(",", ":"))
+      os.replace(tmp, self.live_path)
+    except OSError:
+      pass
+
   def _end(self, reason, now, wall):
     self.active = False
     self._cand_since = self._rev_since = None
     self._clear(SOURCE)
+    self._live(now, wall, force=True, active=False, reason=reason)
     self.last_event = ("end", {"reason": reason, "secs": round(now - (self.started_at or now), 1),
                                "min_dist_m": None if self.min_dist is None else round(self.min_dist, 1), "wall": round(wall, 1)})
 
@@ -123,9 +143,14 @@ class GaragePark:
       self._post(SOURCE, TEXT, "info", BANNER_TIMEOUT_S)
       self._last_post = now
       self.last_event = ("start", {"dist_m": round(d, 1), "mph": round(mph, 1), "wall": round(wall, 1)})
+      self._live(now, wall, force=True, active=True, dist_m=round(d, 1), mph=round(mph, 1), gear=gear, secs=0.0,
+                 heading_err_deg=round(angle_diff(self._bearing, self.cfg["heading"]), 1))
       return True
 
     self.min_dist = min(self.min_dist, d)
+    herr = None if self._bearing is None else round(angle_diff(self._bearing, self.cfg["heading"]), 1)
+    self._live(now, wall, active=True, dist_m=round(d, 1), heading_err_deg=herr, mph=round(mph, 1), gear=gear,
+               secs=round(now - self.started_at, 1))
     if gear == "park":
       self._end("parked", now, wall)
       return True
