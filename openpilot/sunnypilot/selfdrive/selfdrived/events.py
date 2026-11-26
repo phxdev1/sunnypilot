@@ -233,6 +233,15 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.none, AudibleAlertSP.promptSingleHigh, 5.),
   },
 
+  # Canopy prompts: a chime and a short line, shown whether or not openpilot is engaged
+  EventNameSP.canopyRampMeter: {
+    ET.PERMANENT: Alert(
+      "Ramp meter ahead",
+      "Watch the light, holding speed",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.MID, VisualAlert.none, AudibleAlert.prompt, 4.),
+  },
+
   EventNameSP.e2eChime: {
     ET.PERMANENT: Alert(
       "",

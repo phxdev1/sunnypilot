@@ -17,6 +17,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MA
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Policy, OffsetType
 from openpilot.sunnypilot.canopy.speed_offsets import LearnedSpeedOffsets
 from openpilot.sunnypilot.canopy.merge_up import MergeUp, plan_max_curvature
+from openpilot.sunnypilot.canopy.ramp_meter import RampMeterHold
 
 SpeedLimitSource = custom.LongitudinalPlanSP.SpeedLimit.Source
 
@@ -86,6 +87,8 @@ class SpeedLimitResolver:
     self.learned_offsets = LearnedSpeedOffsets()
     self.learned_offsets.refresh()
     self.merge_up = MergeUp()
+    self.ramp_meter = RampMeterHold()
+    self._ramp_hold_limit = None
 
     self.speed_limit = 0.
     self.speed_limit_last = 0.
@@ -115,6 +118,7 @@ class SpeedLimitResolver:
       self.offset_type = self.params.get("SpeedLimitOffsetType", return_default=True)
       self.offset_value = self.params.get("SpeedLimitValueOffset", return_default=True)
       self.learned_offsets.refresh()
+      self.ramp_meter.meters.refresh()
 
   def _get_speed_limit_offset(self) -> float:
     limit_mph = self.speed_limit * CV.MS_TO_MPH
@@ -184,7 +188,8 @@ class SpeedLimitResolver:
       model = sm['modelV2']
     except KeyError:  # the mapd debug tool runs the resolver without the model
       model = None
-    if self.merge_up.update(speed_limit, next_speed_limit, map_data.speedLimitAheadDistance, plan_max_curvature(model)):
+    merging_up = self.merge_up.update(speed_limit, next_speed_limit, map_data.speedLimitAheadDistance, plan_max_curvature(model))
+    if merging_up and not self.ramp_meter.holding:  # never speed toward a ramp meter
       self.limit_solutions[SpeedLimitSource.map] = next_speed_limit
       self.distance_solutions[SpeedLimitSource.map] = 0.
 
@@ -215,11 +220,35 @@ class SpeedLimitResolver:
 
     return speed_limit, distance, source
 
+  def _update_ramp_meter(self, sm) -> None:
+    """Canopy ramp meter hold: see canopy/ramp_meter.py."""
+    try:
+      gps = sm[self._gps_location_service]
+      map_data = sm['liveMapDataSP']
+    except KeyError:
+      gps, map_data = None, None
+    map_limit = map_data.speedLimit if map_data is not None and map_data.speedLimitValid else 0.
+    self.ramp_meter.update(gps, self.v_ego, map_limit)
+
+  def _apply_ramp_meter_hold(self) -> None:
+    """While a ramp meter is ahead, the limit can drop but never rise above where it stood."""
+    if not self.ramp_meter.holding:
+      self._ramp_hold_limit = None
+      return
+    if self._ramp_hold_limit is None:
+      self._ramp_hold_limit = self.speed_limit  # 0 on an untagged ramp: then no new limit at all until past
+    elif self.speed_limit > self._ramp_hold_limit:
+      self.speed_limit = self._ramp_hold_limit
+    else:
+      self._ramp_hold_limit = self.speed_limit
+
   def update(self, v_ego: float, sm: messaging.SubMaster) -> None:
     self.v_ego = v_ego
     self.update_params()
 
+    self._update_ramp_meter(sm)
     self.speed_limit, self.distance, self.source = self._resolve_limit_sources(sm)
+    self._apply_ramp_meter_hold()
     self.speed_limit_offset = self._get_speed_limit_offset()
 
     self.update_speed_limit_states()

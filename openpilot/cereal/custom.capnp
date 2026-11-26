@@ -360,6 +360,9 @@ struct OnroadEventSP @0xda96579883444c35 {
     e2eChime @23;
     laneChangeRoadEdge @24;
     bigModelReady @25;
+    canopyRampMeter @26;
+    canopyMoveOver @27;
+    canopyLaneDrop @28;
   }
 }
 

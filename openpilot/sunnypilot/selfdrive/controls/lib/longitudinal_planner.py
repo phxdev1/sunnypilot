@@ -53,6 +53,10 @@ class LongitudinalPlannerSP:
 
     # Speed Limit Assist
     has_speed_limit = self.resolver.speed_limit_valid or self.resolver.speed_limit_last_valid
+    # Canopy: one chime as a ramp meter's light comes up (ProPILOT won't stop for it on its own)
+    if self.resolver.ramp_meter.chime:
+      self.events_sp.add(custom.OnroadEventSP.EventName.canopyRampMeter)
+
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp)
 
