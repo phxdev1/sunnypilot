@@ -32,7 +32,12 @@ STOP_V = 2.5           # m/s: the model plan is "stopped" under this
 MIN_DECEL = 0.4        # m/s^2: an unfinished plan slowing less than this isn't stopping
 STOP_BEFORE_M = 45.    # signal nodes often sit mid-intersection; the stop line is up to ~40 m short
 STOP_PAST_M = 15.
-STOP_HOLD_S = 0.5      # the model must want to stop this long before we chime
+STOP_HOLD_S = 1.0      # the model must want to stop this long before we chime (was 0.5)
+CHIME_MIN_DECEL = 0.8  # m/s^2: a plan that ends still moving must brake this hard to count for the chime
+STABLE_M = 15.         # the planned stop point may wander this much during the hold, or the hold restarts
+# Nov 26: 5 of 7 red reads on the lap were wrong (the car went through). Reads that only extrapolate a
+# gentle slow-down, or flicker on for a frame or two, were the cheap ones to cut, so the chime now
+# needs a firm or finished stop in the plan, held steady for a full second. Still advisory only.
 LEAD_MARGIN_M = 10.    # a lead car closer than the signal plus this: ProPILOT stops for it, stay quiet
 COOLDOWN_S = 20.       # one chime per intersection (intersections have several signal nodes)
 M_PER_DEG_LAT = 110540.
@@ -85,7 +90,7 @@ class TrafficSignals:
     return best
 
 
-def plan_stop_point(model) -> float | None:
+def plan_stop_point(model, min_decel: float = MIN_DECEL) -> float | None:
   """Where (metres ahead) the model plan comes to a stop, or None if it isn't stopping.
 
   The plan only looks ~10 s ahead, which at 40 mph ends short of a light 150 m out. When it ends
@@ -103,7 +108,7 @@ def plan_stop_point(model) -> float | None:
   if x1 - x0 < 1.:
     return None
   decel = (v0 * v0 - v1 * v1) / (2. * (x1 - x0))
-  if decel < MIN_DECEL:
+  if decel < min_decel:
     return None
   return x1 + v1 * v1 / (2. * decel)
 
@@ -114,6 +119,7 @@ class RedLight:
     self.signal = None       # index of the signal ahead, if any
     self.distance = 0.
     self._stop_since = None
+    self._stop_at0 = None
     self._chimed = None
     self._last_chime = -1e9
 
@@ -136,14 +142,18 @@ class RedLight:
     if hit is None:
       self._stop_since = None
       return False
+    # the stop point is measured from the car, so it shrinks as we close in: compare in track terms
+    stop_shift = v_ego * (now - self._stop_since) if self._stop_since is not None else 0.
 
     self.signal, self.distance = hit
-    stop_at = plan_stop_point(model)
+    stop_at = plan_stop_point(model, CHIME_MIN_DECEL)
     if stop_at is None or not (self.distance - STOP_BEFORE_M <= stop_at <= self.distance + STOP_PAST_M):
       self._stop_since = None
       return False
+    if self._stop_since is not None and abs(stop_at + stop_shift - self._stop_at0) > STABLE_M:
+      self._stop_since = None  # the plan's stop point jumped: start the hold again from here
     if self._stop_since is None:
-      self._stop_since = now
+      self._stop_since, self._stop_at0 = now, stop_at
     if now - self._stop_since < STOP_HOLD_S:
       return False
     if self._chimed == self.signal or now - self._last_chime < COOLDOWN_S:

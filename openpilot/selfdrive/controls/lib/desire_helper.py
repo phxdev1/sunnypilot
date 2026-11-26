@@ -9,7 +9,12 @@ LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
 TurnDirection = custom.ModelDataV2SP.TurnDirection
 
-LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
+# Canopy (Nov 26): under 40 mph the blinker means a turn, never a comma lane change. The 27.4 min
+# event on the Nov 26 lap was a right turn signalled at 31 mph that the comma took as a lane change
+# and began steering toward the curb. Every lane change it finished that night was 59 mph or faster.
+LANE_CHANGE_SPEED_MIN = 40 * CV.MPH_TO_MS
+# A change already under way is dropped if the car slows below this: that is a turn, not a merge.
+LANE_CHANGE_ABORT_SPEED = 30 * CV.MPH_TO_MS
 LANE_CHANGE_TIME_MAX = 10.
 LANE_CHANGE_START_TIME = 0.5
 # Blind spot can cancel a started lane change only this early, while the car is still well inside
@@ -170,10 +175,11 @@ class DesireHelper:
         if not going_left and carstate.rightBlindspot:
           self._right_bs_seen = True
 
-        if opposite_blinker or torque_against or blindspot_ahead:
+        slowed_to_turn = v_ego < LANE_CHANGE_ABORT_SPEED
+        if opposite_blinker or torque_against or blindspot_ahead or slowed_to_turn:
           if not going_left:
             cloudlog.event("canopy_right_change", phase="cancel", bs_seen=self._right_bs_seen, opposite_blinker=bool(opposite_blinker),
-                           torque_against=bool(torque_against), t=round(self.lane_change_timer, 2))
+                           torque_against=bool(torque_against), slowed=bool(slowed_to_turn), t=round(self.lane_change_timer, 2))
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
           self.lane_change_timer = 0.0
