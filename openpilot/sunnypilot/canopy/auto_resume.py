@@ -31,6 +31,9 @@ LEAD_CLOSE_M = 8.0
 LEAD_GAIN_M = 1.5
 LEAD_MOVE_MS = 0.5
 LEAD_HOLD_S = 0.3
+# ProPILOT holds a stop for about 3 minutes, then switches off and sets the parking brake (Leaf owner's
+# manual). RES does nothing after that, so never press past this.
+MAX_HOLD_S = 150.
 GREEN_X_M = 30.
 GREEN_HOLD_S = 0.3
 GREEN_OK_S = 5.0
@@ -100,7 +103,9 @@ class AutoResumeShadow:
         if leaving:
           s["gain_since"] = s["gain_since"] or now
           if now - s["gain_since"] >= LEAD_HOLD_S:
-            if not s["engaged"]:
+            if stopped_s > MAX_HOLD_S:
+              s["skip"] = "held_too_long"
+            elif not s["engaged"]:
               s["skip"] = "not_engaged"
             elif not s["cruise"]:
               s["skip"] = "cruise_off"
