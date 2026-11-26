@@ -5,6 +5,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.selfdrive.controls.lib.auto_lane_change import AutoLaneChangeController, AutoLaneChangeMode
 from openpilot.sunnypilot.selfdrive.controls.lib.lane_turn_desire import LaneTurnController
 from openpilot.sunnypilot.canopy.voice_merge import VoiceMerge
+from openpilot.sunnypilot.canopy.blinker_intent import BlinkerIntent
 from openpilot.sunnypilot.canopy import params_file
 
 LaneChangeState = log.LaneChangeState
@@ -97,6 +98,11 @@ class DesireHelper:
     self.voice = VoiceMerge()
     self.voice_change = False      # Canopy: the change under way was started by voice
     self._prev_held = (False, False)  # Canopy: held blinkers on the previous frame, for a new opposite signal
+    try:
+      self.blinker_intent = BlinkerIntent()
+    except Exception:
+      self.blinker_intent = None
+    self._intent_go = False        # Canopy: blinker_intent said lane change, gate live: no nudge needed
 
   @staticmethod
   def get_lane_change_direction(CS):
@@ -121,8 +127,14 @@ class DesireHelper:
     return self._blinker_hold[0] > 0, self._blinker_hold[1] > 0
 
   def update(self, carstate, lateral_active, lane_change_prob, left_edge_detected=False, right_edge_detected=False,
-            lane_info=None):
+            lane_info=None, edges=None, gps=None):
     carstate = _HeldBlinkers(carstate, *self._hold_blinkers(carstate.leftBlinker, carstate.rightBlinker))
+    if self.blinker_intent and edges and lane_info:
+      try:
+        self.blinker_intent.observe(edges[0], edges[1], edges[2], edges[3],
+                                    lane_info[0], lane_info[1], lane_info[2], lane_info[3])
+      except Exception:
+        pass
     self._read_hold_side()
     self.alc.update_params()
     self.alc.bsm_ok = self.enable_bsm and carstate.canValid
@@ -146,6 +158,7 @@ class DesireHelper:
       self.lane_change_direction = LaneChangeDirection.none
       self.lane_change_timer = 0.0
       self.voice_change = False
+      self._intent_go = False
     else:
       if self.lane_change_state == LaneChangeState.off:
         self.hold_changes = 0
@@ -161,6 +174,14 @@ class DesireHelper:
         self.lane_change_timer = 0.0
         # Initialize lane change direction to prevent UI alert flicker
         self.lane_change_direction = self.get_lane_change_direction(carstate)
+        self._intent_go = False
+        if self.blinker_intent is not None and nudge_band:
+          try:
+            side = "left" if carstate.leftBlinker else "right"
+            record = self.blinker_intent.on_blinker(side, v_ego * CV.MS_TO_MPH, *(gps if gps else ()))
+            self._intent_go = bool(record["act"])
+          except Exception:
+            self._intent_go = False
 
       elif self.lane_change_state == LaneChangeState.preLaneChange:
         # Update lane change direction
@@ -184,14 +205,17 @@ class DesireHelper:
         self.alc.update_lane_change(blindspot_detected, edge_detected, carstate.brakePressed, torque_applied)
 
 
+        nudge_ok = torque_applied and abs(carstate.steeringAngleDeg) < NUDGE_MAX_ANGLE_DEG and \
+                   self._since_brake >= NUDGE_NO_BRAKE_FRAMES and carstate.aEgo > NUDGE_MIN_ACCEL
+        intent_ok = self._intent_go and self._since_brake >= NUDGE_NO_BRAKE_FRAMES and carstate.aEgo > NUDGE_MIN_ACCEL
         if not one_blinker or below_lane_change_speed:
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
           self.lane_change_timer = 0.0
-        elif nudge_band and not (torque_applied and abs(carstate.steeringAngleDeg) < NUDGE_MAX_ANGLE_DEG and
-                                 self._since_brake >= NUDGE_NO_BRAKE_FRAMES and carstate.aEgo > NUDGE_MIN_ACCEL):
+          self._intent_go = False
+        elif nudge_band and not (nudge_ok or intent_ok):
           pass  # surface street: waits for his nudge; the blinker alone stays a turn
-        elif (torque_applied or self.alc.auto_lane_change_allowed) and not self.alc.lane_change_blocked:
+        elif (torque_applied or intent_ok or self.alc.auto_lane_change_allowed) and not self.alc.lane_change_blocked:
           self.lane_change_state = LaneChangeState.laneChangeStarting
           self.lane_change_timer = 0.0
           if self.lane_change_direction == LaneChangeDirection.right:
@@ -221,6 +245,14 @@ class DesireHelper:
 
         slowed_to_turn = v_ego < LANE_CHANGE_ABORT_SPEED or (nudge_band and abs(carstate.steeringAngleDeg) > TURN_ANGLE_DEG)
         if opposite_blinker or torque_against or blindspot_ahead or slowed_to_turn:
+          if self._intent_go and self.blinker_intent is not None:
+            reason = "opposite_blinker" if opposite_blinker else \
+                     "torque_against" if torque_against else "blindspot" if blindspot_ahead else "slowed_to_turn"
+            try:
+              self.blinker_intent.on_cancel(reason, v_ego * CV.MS_TO_MPH)
+            except Exception:
+              pass
+            self._intent_go = False
           if not going_left:
             cloudlog.event("canopy_right_change", phase="cancel", bs_seen=self._right_bs_seen, opposite_blinker=bool(opposite_blinker),
                            torque_against=bool(torque_against), slowed=bool(slowed_to_turn), t=round(self.lane_change_timer, 2))
@@ -230,6 +262,7 @@ class DesireHelper:
           self.voice_change = False
 
         elif lane_change_prob < 0.02 and self.lane_change_timer >= LANE_CHANGE_START_TIME:
+          self._intent_go = False
           if not going_left:
             cloudlog.event("canopy_right_change", phase="done", bs_seen=self._right_bs_seen, t=round(self.lane_change_timer, 2))
           self.lane_change_timer = 0.0

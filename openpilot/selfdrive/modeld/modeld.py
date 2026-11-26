@@ -309,7 +309,7 @@ def main(demo=False):
   pub_socks = ["modelV2", "drivingModelData", "cameraOdometry", "modelDataV2SP"] + (["chestnutGpuState"] if CHESTNUT else [])
   pm = PubMaster(pub_socks)
   sm = SubMaster(["deviceState", "carState", "narrowRoadCameraState", "extrinsicsCalibration", "driverMonitoringState",
-                  "carControl", "controlsState", "lateralDelay"])
+                  "carControl", "controlsState", "lateralDelay", "gpsLocationSP"])
 
   publish_state = PublishState()
   params = Params()
@@ -464,8 +464,20 @@ def main(demo=False):
       left_edge, right_edge = RELC.update_and_fill(modelv2_send.modelV2, mdv2sp_send.modelDataV2SP, v_ego)
       mv2 = modelv2_send.modelV2
       lane_info = (mv2.laneLines[1].y[0], mv2.laneLines[2].y[0], mv2.laneLineProbs[1], mv2.laneLineProbs[2])
+      try:
+        edges = (abs(mv2.roadEdges[0].y[0]), abs(mv2.roadEdges[1].y[0]), mv2.roadEdgeStds[0], mv2.roadEdgeStds[1])
+      except Exception:
+        edges = None
+      gps = None
+      if sm.seen['gpsLocationSP']:
+        g = sm['gpsLocationSP']
+        if getattr(g, 'hasFix', False):
+          glat = getattr(g, 'latitude', None)
+          glon = getattr(g, 'longitude', None)
+          ghdg = getattr(g, 'bearingDeg', None)
+          gps = (glat, glon, ghdg) if None not in (glat, glon, ghdg) else None
       DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, left_edge, right_edge,
-                lane_info=lane_info)
+                lane_info=lane_info, edges=edges, gps=gps)
       modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
       modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
       mdv2sp_send.valid = modelv2_send.valid
