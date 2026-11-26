@@ -1,6 +1,7 @@
 from openpilot.cereal import log, custom
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
+from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.selfdrive.controls.lib.auto_lane_change import AutoLaneChangeController, AutoLaneChangeMode
 from openpilot.sunnypilot.selfdrive.controls.lib.lane_turn_desire import LaneTurnController
 
@@ -31,7 +32,10 @@ BLINKER_HOLD_FRAMES = int(0.5 / DT_MDL)  # Canopy: hold each side 0.5 s past its
 HOLD_FILE = "/dev/shm/canopy_hold"
 HOLD_READ_FRAMES = 5
 HOLD_SETTLE_TIME = 1.5
-RIGHT_CHANGES_OFF = True  # Canopy: see the preLaneChange gate
+# Canopy: Mark checks his right before he signals (Nov 25), so the right blind spot read warns but
+# never blocks or cancels a right change. The read is logged on every right change so the right side
+# of 0x3F0/0x3F1 keeps being learned. Left still blocks and cancels on the blind spot.
+RIGHT_BS_ADVISORY = True
 MAX_HOLD_CHANGES = 4
 
 
@@ -62,6 +66,7 @@ class DesireHelper:
     self.hold_side = ""      # Canopy: "right" while a held right blinker may keep going
     self._hold_read = 0
     self.hold_changes = 0    # lane changes made on this hold
+    self._right_bs_seen = False  # Canopy: right blind spot read occupied at any point in this right change
 
   @staticmethod
   def get_lane_change_direction(CS):
@@ -126,18 +131,14 @@ class DesireHelper:
                           (carstate.steeringTorque < 0 and self.lane_change_direction == LaneChangeDirection.right))
 
         blindspot_detected = ((carstate.leftBlindspot and self.lane_change_direction == LaneChangeDirection.left) or
-                              (carstate.rightBlindspot and self.lane_change_direction == LaneChangeDirection.right))
+                              (carstate.rightBlindspot and self.lane_change_direction == LaneChangeDirection.right
+                               and not RIGHT_BS_ADVISORY))
 
         edge_detected = ((left_edge_detected and self.lane_change_direction == LaneChangeDirection.left) or
                          (right_edge_detected and self.lane_change_direction == LaneChangeDirection.right))
 
         self.alc.update_lane_change(blindspot_detected, edge_detected, carstate.brakePressed, torque_applied)
 
-        # Canopy: right lane changes are off until the right blind spot gate is proven (a right change
-        # started with the right warning lit, Nov 25). The model holds the lane; he steers the change.
-        if RIGHT_CHANGES_OFF and self.lane_change_direction == LaneChangeDirection.right:
-          self.alc.lane_change_blocked = True
-          torque_applied = False
 
         if not one_blinker or below_lane_change_speed:
           self.lane_change_state = LaneChangeState.off
@@ -146,6 +147,11 @@ class DesireHelper:
         elif (torque_applied or self.alc.auto_lane_change_allowed) and not self.alc.lane_change_blocked:
           self.lane_change_state = LaneChangeState.laneChangeStarting
           self.lane_change_timer = 0.0
+          if self.lane_change_direction == LaneChangeDirection.right:
+            self._right_bs_seen = bool(carstate.rightBlindspot)
+            cloudlog.event("canopy_right_change", phase="start", bs_right=bool(carstate.rightBlindspot),
+                           bs_left=bool(carstate.leftBlindspot), mph=round(v_ego * CV.MS_TO_MPH), nudge=bool(torque_applied),
+                           hold=self.hold_changes)
 
       elif self.lane_change_state == LaneChangeState.laneChangeStarting:
         self.lane_change_timer += DT_MDL
@@ -159,15 +165,22 @@ class DesireHelper:
         opposite_blinker = carstate.rightBlinker if going_left else carstate.leftBlinker
         torque_against = carstate.steeringPressed and \
                          ((carstate.steeringTorque < 0) if going_left else (carstate.steeringTorque > 0))
-        blindspot_ahead = (carstate.leftBlindspot if going_left else carstate.rightBlindspot) and \
+        blindspot_ahead = (carstate.leftBlindspot if going_left else (carstate.rightBlindspot and not RIGHT_BS_ADVISORY)) and \
                           self.lane_change_timer < LANE_CHANGE_BSM_ABORT_TIME
+        if not going_left and carstate.rightBlindspot:
+          self._right_bs_seen = True
 
         if opposite_blinker or torque_against or blindspot_ahead:
+          if not going_left:
+            cloudlog.event("canopy_right_change", phase="cancel", bs_seen=self._right_bs_seen, opposite_blinker=bool(opposite_blinker),
+                           torque_against=bool(torque_against), t=round(self.lane_change_timer, 2))
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
           self.lane_change_timer = 0.0
 
         elif lane_change_prob < 0.02 and self.lane_change_timer >= LANE_CHANGE_START_TIME:
+          if not going_left:
+            cloudlog.event("canopy_right_change", phase="done", bs_seen=self._right_bs_seen, t=round(self.lane_change_timer, 2))
           self.lane_change_timer = 0.0
           self.hold_changes += 1
           if one_blinker:

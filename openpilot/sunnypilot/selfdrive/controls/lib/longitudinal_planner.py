@@ -91,7 +91,10 @@ class LongitudinalPlannerSP:
       if self.lane_hold.merge_cue == "left":
         self.events_sp.add(custom.OnroadEventSP.EventName.canopyMergeLeft)
       elif self.lane_hold.merge_cue == "right":
-        self.events_sp.add(custom.OnroadEventSP.EventName.canopyMergeRight)
+        if CS.rightBlindspot:
+          self.events_sp.add(custom.OnroadEventSP.EventName.canopyRightBlindspot)
+        else:
+          self.events_sp.add(custom.OnroadEventSP.EventName.canopyMergeRight)
     except Exception:
       cloudlog.exception("canopy lane hold failed")
 

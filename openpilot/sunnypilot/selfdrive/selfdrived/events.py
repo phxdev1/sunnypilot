@@ -292,6 +292,16 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.MID, VisualAlert.none, AudibleAlertSP.canopyMergeLeft, 1.6),
   },
 
+  # A right change started while the blind spot reads occupied. Warns only (Mark checks his right);
+  # the 0x3F0 read can't yet tell which side, so the words say "blind spot", not "right lane".
+  EventNameSP.canopyRightBlindspot: {
+    ET.PERMANENT: Alert(
+      "Blind spot warning",
+      "Merging right, check your mirror",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.HIGH, VisualAlert.none, AudibleAlertSP.canopyRightBlindspot, 2.5),
+  },
+
   EventNameSP.canopyMergeRight: {
     ET.PERMANENT: Alert(
       "",

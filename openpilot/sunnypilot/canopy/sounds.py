@@ -35,6 +35,9 @@ SLOTS = {
   "merge_right": ("canopyMergeRight", "prompt_single_high.wav"),
   "hand_back": ("canopyHandBack", "warning.wav"),
   "blinker_off": ("canopyBlinkerOff", "prompt_single_low.wav"),  # lane change done, blinker still on
+  # A right change starting while the blind spot reads occupied: a loud chime, then Zia "Blind spot."
+  # It warns only; the change goes on (he checks his right). Stock fallback is the loud warning chime.
+  "right_blindspot": ("canopyRightBlindspot", "warning.wav"),
 }
 
 
