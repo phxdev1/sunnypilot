@@ -9,12 +9,22 @@ LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
 TurnDirection = custom.ModelDataV2SP.TurnDirection
 
-# Canopy (Nov 26): under 40 mph the blinker means a turn, never a comma lane change. The 27.4 min
-# event on the Nov 26 lap was a right turn signalled at 31 mph that the comma took as a lane change
-# and began steering toward the curb. Every lane change it finished that night was 59 mph or faster.
-LANE_CHANGE_SPEED_MIN = 40 * CV.MPH_TO_MS
-# A change already under way is dropped if the car slows below this: that is a turn, not a merge.
-LANE_CHANGE_ABORT_SPEED = 30 * CV.MPH_TO_MS
+# Canopy lane change speeds (Mark, Nov 26: "Let's limit it to 50"):
+#  - 50 mph and up: the blinker alone starts a lane change, as on the freeway.
+#  - 25 to 50 mph (surface streets): the blinker alone is a turn. A light nudge on the wheel toward the
+#    blinker starts the change, only with the wheel near straight, no brake in the last 2 s and not
+#    slowing hard. (Nov 25 lap, 27.4 min: a right turn signalled at 31 mph was taken as a lane change
+#    and steered toward the curb, so the blinker alone never starts one here.)
+#  - under 25 mph: always a turn.
+LANE_CHANGE_SPEED_MIN = 25 * CV.MPH_TO_MS
+LANE_CHANGE_AUTO_MIN = 50 * CV.MPH_TO_MS
+NUDGE_MAX_ANGLE_DEG = 10.0
+NUDGE_NO_BRAKE_FRAMES = int(2.0 / DT_MDL)
+NUDGE_MIN_ACCEL = -1.0
+# A change under way is dropped if the car slows below this or the wheel goes past TURN_ANGLE_DEG
+# under LANE_CHANGE_AUTO_MIN: that is a turn, not a merge.
+LANE_CHANGE_ABORT_SPEED = 20 * CV.MPH_TO_MS
+TURN_ANGLE_DEG = 30.0
 LANE_CHANGE_TIME_MAX = 10.
 LANE_CHANGE_START_TIME = 0.5
 # Blind spot can cancel a started lane change only this early, while the car is still well inside
@@ -72,6 +82,7 @@ class DesireHelper:
     self._hold_read = 0
     self.hold_changes = 0    # lane changes made on this hold
     self._right_bs_seen = False  # Canopy: right blind spot read occupied at any point in this right change
+    self._since_brake = NUDGE_NO_BRAKE_FRAMES  # Canopy: model frames since the brake was last pressed
 
   @staticmethod
   def get_lane_change_direction(CS):
@@ -104,6 +115,8 @@ class DesireHelper:
     v_ego = carstate.vEgo
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
     below_lane_change_speed = v_ego < LANE_CHANGE_SPEED_MIN
+    nudge_band = v_ego < LANE_CHANGE_AUTO_MIN
+    self._since_brake = 0 if carstate.brakePressed else min(self._since_brake + 1, NUDGE_NO_BRAKE_FRAMES)
 
     # Lane turn controller update
     self.lane_turn_controller.update_lane_turn(blindspot_left=carstate.leftBlindspot, blindspot_right=carstate.rightBlindspot,
@@ -149,6 +162,9 @@ class DesireHelper:
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
           self.lane_change_timer = 0.0
+        elif nudge_band and not (torque_applied and abs(carstate.steeringAngleDeg) < NUDGE_MAX_ANGLE_DEG and
+                                 self._since_brake >= NUDGE_NO_BRAKE_FRAMES and carstate.aEgo > NUDGE_MIN_ACCEL):
+          pass  # surface street: waits for his nudge; the blinker alone stays a turn
         elif (torque_applied or self.alc.auto_lane_change_allowed) and not self.alc.lane_change_blocked:
           self.lane_change_state = LaneChangeState.laneChangeStarting
           self.lane_change_timer = 0.0
@@ -156,7 +172,7 @@ class DesireHelper:
             self._right_bs_seen = bool(carstate.rightBlindspot)
             cloudlog.event("canopy_right_change", phase="start", bs_right=bool(carstate.rightBlindspot),
                            bs_left=bool(carstate.leftBlindspot), mph=round(v_ego * CV.MS_TO_MPH), nudge=bool(torque_applied),
-                           hold=self.hold_changes)
+                           hold=self.hold_changes, surface=bool(nudge_band))
 
       elif self.lane_change_state == LaneChangeState.laneChangeStarting:
         self.lane_change_timer += DT_MDL
@@ -175,7 +191,7 @@ class DesireHelper:
         if not going_left and carstate.rightBlindspot:
           self._right_bs_seen = True
 
-        slowed_to_turn = v_ego < LANE_CHANGE_ABORT_SPEED
+        slowed_to_turn = v_ego < LANE_CHANGE_ABORT_SPEED or (nudge_band and abs(carstate.steeringAngleDeg) > TURN_ANGLE_DEG)
         if opposite_blinker or torque_against or blindspot_ahead or slowed_to_turn:
           if not going_left:
             cloudlog.event("canopy_right_change", phase="cancel", bs_seen=self._right_bs_seen, opposite_blinker=bool(opposite_blinker),
