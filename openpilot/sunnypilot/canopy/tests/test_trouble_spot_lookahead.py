@@ -95,6 +95,8 @@ def test_gate_not_live_logs_one_shadow_row_and_posts_nothing(tmp_path):
   assert rows[0]["spot"] == "s1"
   assert rows[0]["along_m"] == 150
   assert rows[0]["source"] == "history"
+  assert rows[0]["spot_lat"] == round(spot["lat"], 6)
+  assert rows[0]["spot_lon"] == round(spot["lon"], 6)
 
   assert run(obj, 51.0, 1001.0) is False
   assert len(la_shadow.read_text().splitlines()) == 1

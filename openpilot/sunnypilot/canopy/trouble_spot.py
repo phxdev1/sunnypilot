@@ -228,7 +228,8 @@ class TroubleSpots:
     if not self.la_shadow_path:
       return
     row = {"t": round(wall, 1), "spot": s["id"], "along_m": round(along), "source": view.get("source"),
-           "path_conf": view.get("path_conf"), "mph": round(v_ego * MS_TO_MPH, 1), "live": False}
+           "path_conf": view.get("path_conf"), "mph": round(v_ego * MS_TO_MPH, 1), "live": False,
+           "spot_lat": round(s["lat"], 6), "spot_lon": round(s["lon"], 6)}
     try:
       os.makedirs(os.path.dirname(self.la_shadow_path), exist_ok=True)
       with open(self.la_shadow_path, "a") as f:
