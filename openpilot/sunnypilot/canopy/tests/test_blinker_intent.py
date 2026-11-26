@@ -176,3 +176,23 @@ def test_every_on_blinker_writes_one_line(tmp_path):
   assert len(lines) == 3
   for ln in lines:
     assert json.loads(ln)["call"] in ("lane_change", "turn", "abstain", "none")
+
+
+def test_calls_decision_logger_once_per_blinker(tmp_path, monkeypatch):
+  calls = []
+
+  def recorder(*args, **kwargs):
+    calls.append((args, kwargs))
+
+  monkeypatch.setattr(bi, "_log_decision", recorder)
+  log = tmp_path / "blinker.jsonl"
+  hints = tmp_path / "hints.json"
+  off = tmp_path / "off"
+  gates = FakeGates(live=True)
+  intent = bi.BlinkerIntent(gates=gates, log_path=str(log), hints_path=str(hints), off_flag=str(off))
+  _fill(intent)
+  for _ in range(3):
+    intent.on_blinker("right", 35.0)
+  assert len(calls) == 3
+  for args, _kwargs in calls:
+    assert args[0] == "blinker_intent"

@@ -16,6 +16,11 @@ import threading
 import time
 from collections import deque
 
+try:
+  from openpilot.sunnypilot.canopy.decision_log import log_decision as _log_decision
+except Exception:
+  _log_decision = None
+
 FEATURE = "blinker_intent"
 LOG_PATH = "/data/canopy/blinker_intent.jsonl"
 HINTS_PATH = "/data/canopy/blinker_hints.json"
@@ -205,9 +210,12 @@ class BlinkerIntent:
     call, conf, why = decide(side, mph, n, conf, turn_count)
 
     live = False
+    speed = None
     if call == "lane_change" and self.gates is not None and not self._off:
       try:
         cond = self.gates.conditions(None, None, None, mph, None)
+        if isinstance(cond, dict):
+          speed = cond.get("speed")
         live = bool(self.gates.is_live(FEATURE, cond, conf))
       except Exception:
         live = False
@@ -218,6 +226,13 @@ class BlinkerIntent:
       "turn_lanes": turn_count, "live": live, "act": live, "rule_version": 3,
     }
     self._append(record)
+    if _log_decision is not None:
+      try:
+        _log_decision(FEATURE, call, conf,
+                      ctx={"speed": speed, "side": side, "n": n, "why": why},
+                      live=live, lat=lat, lon=lon)
+      except Exception:
+        pass
     self.last = record
     return record
 
