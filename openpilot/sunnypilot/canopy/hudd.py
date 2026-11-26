@@ -17,9 +17,11 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
   DELETE /banner?source=NAME   the status banner on the comma screen (canopy/banner.py).
                Changes also go out on /events as {"type": "banner", "banner": {...} | null},
                so the car app can follow the same state.
-  POST /voice_merge {"side": "left"|"right", "id"?}  Zia heard "merge left/right". Answers {"ok", "verdict", "mph", "live"} at once:
+  POST /voice_merge {"side": "left"|"right", "id"?}  Zia heard "merge left/right". Answers {"ok", "verdict", "mph", "live", "band"} at once:
                verdict "ok" (written to /dev/shm/canopy/voice_merge.json for the controls to act on), "too_slow" (under 25 mph),
-               "too_fast" (50 mph and up: the blinker does it), "steering_off", or "no_frame" (nothing to check against: still written).
+               "too_fast" (85 mph and up: the blinker does it), "steering_off", or "no_frame" (nothing to check against: still written).
+               "live" is the freeway flag's existence when the frame's mph >= 50, otherwise the street flag's (unchanged when no frame).
+               "band" is "freeway" (mph >= 50), "street" (mph < 50) or None (no frame).
   /events also carries {"type": "voice_merge", "phase", "side", "reason"?, "signaled"?, "live", ...} each time the controls
                report a voice merge step (heard, would_start, start, cancel, expired), from /dev/shm/canopy/voice_merge_state.json.
   GET /garage  live garage parking state (also on /events as {"type": "garage", ...}, 2/s
@@ -64,6 +66,7 @@ OFF_FLAG = "/data/canopy/hud_off"
 VOICE_FILE = os.path.join(banner.BANNER_DIR, "voice_merge.json")
 VOICE_STATE = os.path.join(banner.BANNER_DIR, "voice_merge_state.json")
 VOICE_LIVE = "/data/canopy/voice_merge_live"
+VOICE_LIVE_FREEWAY = "/data/canopy/voice_merge_live_freeway"
 HZ = 10
 MS_TO_MPH = 2.23694
 _ASP = custom.SelfdriveStateSP.AudibleAlert
@@ -153,7 +156,7 @@ def voice_verdict(frame, age_s) -> str:
   mph = frame.get("mph") or 0
   if mph < 25:
     return "too_slow"
-  if mph >= 50:
+  if mph >= 85:
     return "too_fast"
   return "ok"
 
@@ -421,7 +424,7 @@ def publish_lossy(qs, item, keep_free=16):
 
 def pump():
   sm = messaging.SubMaster(["modelV2", "carState", "selfdriveState", "radarState", "carControl",
-                                "liveCalibration", _GPS])
+                              "liveCalibration", _GPS])
   prev = None
   next_t = 0.0
   next_banner = 0.0
@@ -531,8 +534,11 @@ class H(BaseHTTPRequestHandler):
           os.replace(VOICE_FILE + ".tmp", VOICE_FILE)
         except OSError:
           return self._json(500, {"ok": False, "error": "write"})
-      return self._json(200, {"ok": True, "verdict": verdict, "mph": frame.get("mph") if frame else None,
-                              "live": os.path.exists(VOICE_LIVE)})
+      mph = frame.get("mph") if frame else None
+      band = "freeway" if (frame is not None and mph is not None and mph >= 50) else "street" if (frame is not None and mph is not None) else None
+      live = os.path.exists(VOICE_LIVE_FREEWAY) if band == "freeway" else (os.path.exists(VOICE_LIVE) if frame is not None else os.path.exists(VOICE_LIVE))
+      return self._json(200, {"ok": True, "verdict": verdict, "mph": mph,
+                              "live": live, "band": band})
     if path != "/banner":
       return self._json(404, {"ok": False})
     try:

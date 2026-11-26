@@ -116,7 +116,8 @@ class DesireHelper:
       self._blinker_hold[i] = BLINKER_HOLD_FRAMES if lit else max(0, self._blinker_hold[i] - 1)
     return self._blinker_hold[0] > 0, self._blinker_hold[1] > 0
 
-  def update(self, carstate, lateral_active, lane_change_prob, left_edge_detected=False, right_edge_detected=False):
+  def update(self, carstate, lateral_active, lane_change_prob, left_edge_detected=False, right_edge_detected=False,
+            lane_info=None):
     carstate = _HeldBlinkers(carstate, *self._hold_blinkers(carstate.leftBlinker, carstate.rightBlinker))
     self._read_hold_side()
     self.alc.update_params()
@@ -128,7 +129,8 @@ class DesireHelper:
     nudge_band = v_ego < LANE_CHANGE_AUTO_MIN
     self._since_brake = 0 if carstate.brakePressed else min(self._since_brake + 1, NUDGE_NO_BRAKE_FRAMES)
     voice_side = self.voice.step(carstate, lateral_active, self.lane_change_state != LaneChangeState.laneChangeStarting,
-                                 left_edge_detected, right_edge_detected, False)
+                                 left_edge_detected, right_edge_detected, False,
+                                 lane_info=lane_info)
 
     # Lane turn controller update
     self.lane_turn_controller.update_lane_turn(blindspot_left=carstate.leftBlindspot, blindspot_right=carstate.rightBlindspot,
