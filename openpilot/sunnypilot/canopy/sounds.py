@@ -43,6 +43,8 @@ SLOTS = {
   "right_blindspot": ("canopyRightBlindspot", "warning.wav"),
   # A trouble spot ahead (he has taken over there before): a chime, then Zia "Heads up, tricky spot."
   "trouble_spot": ("canopyTroubleSpot", "prompt_single_high.wav"),
+  # A corner where he keeps taking over: a chime, then Zia "Your turn.", and steering hands that turn back.
+  "your_turn": ("canopyCornerHandBack", "prompt_single_high.wav"),
 }
 
 

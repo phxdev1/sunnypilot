@@ -327,6 +327,15 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.MID, VisualAlert.none, AudibleAlertSP.canopyTroubleSpot, 3.),
   },
 
+  # A learned hand-back corner: chime and Zia "Your turn." as steering lets go of that one turn
+  EventNameSP.canopyCornerHandBack: {
+    ET.PERMANENT: Alert(
+      "",
+      "",
+      AlertStatus.normal, AlertSize.none,
+      Priority.MID, VisualAlert.none, AudibleAlertSP.canopyCornerHandBack, 3.),
+  },
+
   EventNameSP.canopyMergeRight: {
     ET.PERMANENT: Alert(
       "",

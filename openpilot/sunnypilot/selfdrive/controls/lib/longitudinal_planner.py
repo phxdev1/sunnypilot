@@ -24,6 +24,7 @@ from openpilot.sunnypilot.canopy.garage import GaragePark
 from openpilot.sunnypilot.canopy.auto_resume import AutoResumeShadow
 from openpilot.sunnypilot.canopy.lane_hold import LaneHold
 from openpilot.sunnypilot.canopy.trouble_spot import TroubleSpots
+from openpilot.sunnypilot.canopy.corner_judge import CornerJudge
 from openpilot.common.swaglog import cloudlog
 
 LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
@@ -46,6 +47,7 @@ class LongitudinalPlannerSP:
     self.garage = GaragePark()
     self.auto_resume = AutoResumeShadow()
     self.trouble = TroubleSpots()
+    self.corner = CornerJudge()
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
 
@@ -145,6 +147,18 @@ class LongitudinalPlannerSP:
         cloudlog.event("canopy_trouble_shadow", **self.trouble.last_row)
     except Exception:
       cloudlog.exception("canopy trouble spot failed")
+
+    # Canopy: corner judge. Signaled turns steer through; at a learned hand-back corner it cues
+    # "Your turn" and pauses steering for that turn only (controlsd_ext reads the hand-back file).
+    try:
+      if self.corner.update(sm[self.resolver._gps_location_service], CS, v_ego, bool(sm['carControl'].latActive)):
+        self.events_sp.add(custom.OnroadEventSP.EventName.canopyCornerHandBack)
+      if self.corner.last_fire:
+        cloudlog.event("canopy_corner_handback", **self.corner.last_fire)
+      if self.corner.last_end:
+        cloudlog.event("canopy_corner_handback_end", **self.corner.last_end)
+    except Exception:
+      cloudlog.exception("canopy corner judge failed")
 
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp)
