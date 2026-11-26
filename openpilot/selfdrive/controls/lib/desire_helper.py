@@ -31,6 +31,7 @@ BLINKER_HOLD_FRAMES = int(0.5 / DT_MDL)  # Canopy: hold each side 0.5 s past its
 HOLD_FILE = "/dev/shm/canopy_hold"
 HOLD_READ_FRAMES = 5
 HOLD_SETTLE_TIME = 1.5
+RIGHT_CHANGES_OFF = True  # Canopy: see the preLaneChange gate
 MAX_HOLD_CHANGES = 4
 
 
@@ -131,6 +132,12 @@ class DesireHelper:
                          (right_edge_detected and self.lane_change_direction == LaneChangeDirection.right))
 
         self.alc.update_lane_change(blindspot_detected, edge_detected, carstate.brakePressed, torque_applied)
+
+        # Canopy: right lane changes are off until the right blind spot gate is proven (a right change
+        # started with the right warning lit, Nov 25). The model holds the lane; he steers the change.
+        if RIGHT_CHANGES_OFF and self.lane_change_direction == LaneChangeDirection.right:
+          self.alc.lane_change_blocked = True
+          torque_applied = False
 
         if not one_blinker or below_lane_change_speed:
           self.lane_change_state = LaneChangeState.off
