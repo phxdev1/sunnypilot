@@ -179,6 +179,31 @@ def test_straight_ahead_still_fires_on_the_line(tmp_path):
   assert not la_shadow.exists()
 
 
+def test_shadow_row_does_not_block_the_later_line_cue(tmp_path):
+  """A shadow path hit must leave the live cue's rearm alone: the same spot, once straight
+  ahead on the right heading, still gets its line heads-up."""
+  g = FakeGates(live=False)
+  spot = side_spot()
+  obj, calls, la_shadow, view_path, _ = build(tmp_path, g, [spot])
+  write_view(view_path, 1000.0, spot)
+
+  # 90 deg off to the east: only the shadow path sees it.
+  assert run(obj, 50.0, 1000.0) is False
+  assert len(la_shadow.read_text().splitlines()) == 1
+  assert "s1" not in obj._last_fire
+  assert obj.last_fire is None
+  assert calls == []
+
+  # Move south of the spot, still heading north: it is now 150 m straight ahead and in reach.
+  lat, lon = offset_point(-150.0, 200.0)
+  fired = obj.update(gps_at(lat, lon, 0.0), CAR, 20.0, True, True, 25.0, None,
+                     now=51.0, wall=1001.0)
+  assert fired is True
+  assert obj.last_fire["via"] == "line"
+  assert obj.last_fire["spot"] == "s1"
+  assert len(calls) == 1 and calls[0][0] == "trouble"
+
+
 def test_view_file_is_read_at_most_twice_a_second(tmp_path):
   g = FakeGates(live=False)
   spot = side_spot()

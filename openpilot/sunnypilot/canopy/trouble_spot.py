@@ -104,6 +104,7 @@ class TroubleSpots:
     self._mtime = None
     self._check_t = -1e9
     self._last_fire = {}
+    self._la_shadow_last = {}  # shadow-only path rearm; keeps off the live cue's clock
     self.zone = None        # the approach being watched
     self.last_fire = None   # dict for the caller to log
     self.last_row = None    # finished shadow row
@@ -322,13 +323,16 @@ class TroubleSpots:
     except Exception:
       live = False
     for s, along in self._path_hits(view, reach):
-      if now - self._last_fire.get(s["id"], -1e9) < REARM_S:
-        continue
       if live:
+        if now - self._last_fire.get(s["id"], -1e9) < REARM_S:
+          continue
         self._la_cond = cond
         self._fire(s, along, "path", v_ego, v_cruise, limit, engaged, lat_active, now, wall)
         return True
+      # Shadow changes nothing live: its own rearm, never _last_fire, so the line cue still gets its say.
+      if now - self._la_shadow_last.get(s["id"], -1e9) < REARM_S:
+        continue
       self._log_path_shadow(s, along, view, v_ego, wall)
-      self._last_fire[s["id"]] = now
+      self._la_shadow_last[s["id"]] = now
     return False
 
