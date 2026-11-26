@@ -21,6 +21,7 @@ from openpilot.sunnypilot.canopy.move_over import MoveOver
 from openpilot.sunnypilot.canopy.lane_drop import LaneDrop
 from openpilot.sunnypilot.canopy.red_light import RedLight
 from openpilot.sunnypilot.canopy.garage import GaragePark
+from openpilot.sunnypilot.canopy.auto_resume import AutoResumeShadow
 from openpilot.sunnypilot.canopy.lane_hold import LaneHold
 from openpilot.common.swaglog import cloudlog
 
@@ -42,6 +43,7 @@ class LongitudinalPlannerSP:
     self.lane_hold = LaneHold()
     self.red_light = RedLight()
     self.garage = GaragePark()
+    self.auto_resume = AutoResumeShadow()
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
 
@@ -117,6 +119,16 @@ class LongitudinalPlannerSP:
                            else custom.OnroadEventSP.EventName.canopyGarageEnd)
     except Exception:
       cloudlog.exception("canopy garage banner failed")
+
+    # Canopy: auto-resume from a stop, SHADOW ONLY. Logs where it would press RES (car ahead pulled
+    # away, engaged, no pedals) and each green light read, next to when he actually moved off.
+    try:
+      px = sm['modelV2'].position.x
+      if self.auto_resume.update(CS, sm['radarState'].leadOne, bool(sm['selfdriveState'].enabled),
+                                 px[len(px) - 1] if len(px) else None) and self.auto_resume.last_row:
+        cloudlog.event("canopy_resume_shadow", **self.auto_resume.last_row)
+    except Exception:
+      cloudlog.exception("canopy auto resume shadow failed")
 
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp)
