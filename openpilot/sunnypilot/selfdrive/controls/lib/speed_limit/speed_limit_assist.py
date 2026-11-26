@@ -88,6 +88,8 @@ class SpeedLimitAssist:
     self.state = SpeedLimitAssistState.disabled
     self._state_prev = SpeedLimitAssistState.disabled
     self.pcm_op_long = CP.openpilotLongitudinalControl and CP.pcmCruise
+    # Canopy: on the Leaf, take each new map speed limit without a SET+/SET- confirm tap
+    self.auto_confirm = not self.pcm_op_long and CP.carFingerprint in ("NISSAN_LEAF", "NISSAN_LEAF_IC")
 
     self._plus_hold = 0.
     self._minus_hold = 0.
@@ -226,6 +228,9 @@ class SpeedLimitAssist:
     if self.target_set_speed_confirmed:
       return True
 
+    if self.auto_confirm and self.state == SpeedLimitAssistState.preActive:
+      return True
+
     if self.state != SpeedLimitAssistState.preActive:
       return False
 
@@ -361,7 +366,7 @@ class SpeedLimitAssist:
     return enabled, active
 
   def update_events(self, events_sp: EventsSP) -> None:
-    if self.state == SpeedLimitAssistState.preActive:
+    if self.state == SpeedLimitAssistState.preActive and not self.auto_confirm:
       events_sp.add(EventNameSP.speedLimitPreActive)
 
     if self.state == SpeedLimitAssistState.pending and self._state_prev != SpeedLimitAssistState.pending:
