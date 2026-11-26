@@ -34,6 +34,7 @@ SLOTS = {
   "merge_left": ("canopyMergeLeft", "prompt_single_high.wav"),
   "merge_right": ("canopyMergeRight", "prompt_single_high.wav"),
   "hand_back": ("canopyHandBack", "warning.wav"),
+  "blinker_off": ("canopyBlinkerOff", "prompt_single_low.wav"),  # lane change done, blinker still on
 }
 
 

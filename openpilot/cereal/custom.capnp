@@ -124,6 +124,7 @@ struct SelfdriveStateSP @0x81c2f05a394cf4af {
     canopyMergeLeft @40;
     canopyMergeRight @41;
     canopyHandBack @42;
+    canopyBlinkerOff @43;
   }
 }
 
