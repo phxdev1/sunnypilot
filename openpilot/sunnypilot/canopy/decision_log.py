@@ -11,8 +11,15 @@ _last = {}
 
 
 def log_decision(feature: str, action: str, conf: float, ctx: dict | None = None,
-                 live: bool = False, lat: float | None = None, lon: float | None = None) -> None:
-  """Log one gate decision; rate-limited per (feature, action), never raises."""
+                 live: bool = False, lat: float | None = None, lon: float | None = None,
+                 head: str | None = None, base: str | None = None,
+                 shadow: dict | None = None) -> None:
+  """Log one gate decision; rate-limited per (feature, action), never raises.
+
+  head/base/shadow are the decision head's stamp (heads.py): the live head_id, the
+  base_id and the shadow head_ids with their confidences. Only when one is given do
+  the record gain those fields, so older records stay as they are.
+  """
   try:
     now = time.monotonic()
     key = (feature, action)
@@ -36,6 +43,10 @@ def log_decision(feature: str, action: str, conf: float, ctx: dict | None = None
       "lat": lat,
       "lon": lon,
     }
+    if head is not None or base is not None or shadow is not None:
+      rec["head"] = head
+      rec["base"] = base
+      rec["shadow"] = shadow
     try:
       if os.path.getsize(PATH) >= MAX_BYTES:
         return None

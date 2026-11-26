@@ -26,6 +26,10 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
                "band" is "freeway" (mph >= 50), "street" (mph < 50) or None (no frame).
   /events also carries {"type": "voice_merge", "phase", "side", "reason"?, "signaled"?, "live", ...} each time the controls
                report a voice merge step (heard, would_start, start, cancel, expired), from /dev/shm/canopy/voice_merge_state.json.
+   POST /heads/stage  one head json (8 KB at most) from canopy/heads.py: checks feature, base_sha, version, w and b, that the
+                version matches its sha rule and that it is not in bad.json, then writes it to /data/canopy/heads/staged/.
+                Answers {"ok", "head_id"}. Staging only: it never touches active/, so nothing live changes.
+   GET /heads   the decision heads on disk: live, shadow, staged, last_good and bad ids (canopy/heads.py).
   GET /garage  live garage parking state (also on /events as {"type": "garage", ...}, 2/s
                at most while parking, one final {"active": false, "reason"} at the end).
   /events also carries {"type": "cue", "slot", "sound": "custom"|"stock"|"silent", "played", "mph",
@@ -61,6 +65,7 @@ from openpilot.common.gps import get_gps_location_service
 from openpilot.common.params import Params
 
 from openpilot.sunnypilot.canopy import banner
+from openpilot.sunnypilot.canopy import heads as canopy_heads
 from openpilot.sunnypilot.canopy import leadkind
 from openpilot.sunnypilot.canopy import lookahead_local
 from openpilot.sunnypilot.canopy import sounds as canopy_sounds
@@ -76,6 +81,7 @@ HZ = 10
 MS_TO_MPH = 2.23694
 LA_OFF = "/data/canopy/lookahead_off"
 LA_EVERY_S = 1.0
+HEADS_MAX_BYTES = 8 * 1024  # one head json, anything bigger is not a head
 _ASP = custom.SelfdriveStateSP.AudibleAlert
 CUE_SLOTS = {getattr(_ASP, field): slot for slot, (field, _) in canopy_sounds.SLOTS.items()}
 _params = Params()
@@ -614,6 +620,19 @@ class H(BaseHTTPRequestHandler):
       live = os.path.exists(VOICE_LIVE_FREEWAY) if band == "freeway" else (os.path.exists(VOICE_LIVE) if frame is not None else os.path.exists(VOICE_LIVE))
       return self._json(200, {"ok": True, "verdict": verdict, "mph": mph,
                               "live": live, "band": band})
+    if path == "/heads/stage":
+      try:
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > HEADS_MAX_BYTES:
+          return self._json(413, {"ok": False, "error": "too big"})
+        d = json.loads(self.rfile.read(n) or b"{}")
+      except (ValueError, OSError) as e:
+        return self._json(400, {"ok": False, "error": str(e)[:120]})
+      try:
+        hid = canopy_heads.stage_head(d)
+      except (ValueError, OSError) as e:
+        return self._json(400, {"ok": False, "error": str(e)[:120]})
+      return self._json(200, {"ok": True, "head_id": hid})
     if path != "/banner":
       return self._json(404, {"ok": False})
     try:
@@ -645,6 +664,12 @@ class H(BaseHTTPRequestHandler):
       return self._json(200, {"lookahead": _la["view"],
                               "age_s": round(time.monotonic() - _la["t"], 1) if _la["view"] else None,
                               "n": _la["n"], "err": _la["err"], "off": os.path.exists(LA_OFF)})
+    if path == "/heads":
+      hs = canopy_heads.HeadSet()
+      return self._json(200, {"ok": True, "base": hs.base_id,
+                              "live": hs.live_ids(), "shadow": hs.shadow_ids(),
+                              "staged": hs.staged_ids(), "last_good": hs.last_good_ids(),
+                              "bad": hs.bad, "errors": hs.errors})
     if path == "/hud":
       return self._sse(_clients_hud)
     if path == "/events":
