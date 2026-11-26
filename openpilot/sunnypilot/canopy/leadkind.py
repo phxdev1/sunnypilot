@@ -165,7 +165,7 @@ class LeadKind:
       return dict(self.info, plate=self.plate)
 
   def _frame(self):
-    from cereal.visionipc import VisionStreamType
+    from openpilot.cereal.visionipc import VisionStreamType
     from msgq.visionipc import VisionIpcClient
     if self.vipc is None:
       self.vipc = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)

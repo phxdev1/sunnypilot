@@ -46,8 +46,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import cereal.messaging as messaging
-from cereal import custom
+from openpilot.cereal import messaging, custom
 from openpilot.common.gps import get_gps_location_service
 from openpilot.common.params import Params
 
