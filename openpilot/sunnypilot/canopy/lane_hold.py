@@ -44,6 +44,8 @@ HOLD_WAIT_S = 9.0       # in an exit zone, no next change for this long: it has 
 M_PER_DEG_LAT = 110540.
 BANNER_ZONE = "Exit lane known: hold right to reach it"
 BANNER_EDGE = "In the exit lane"
+NAV_LANES = os.path.join(banner.BANNER_DIR, "nav_lanes.json")  # hudd streams it to the head unit
+NAV_EVERY = 10          # frames between nav_lanes.json writes while in a zone (hudd drops it after 2 s)
 
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
@@ -123,6 +125,8 @@ class LaneHold:
     self._t = 0.
     self._chimes = 0
     self._frame = 0
+    self._nav_on = False
+    self.merge_cue = ""       # "left" or "right" on the frame a lane change starts, else ""
     self._write("")
 
   def _write(self, side: str) -> None:
@@ -132,6 +136,21 @@ class LaneHold:
       with open(tmp, "w") as f:
         f.write(side)
       os.replace(tmp, self.hold_file)
+    except OSError:
+      pass
+
+  def _write_nav(self) -> None:
+    """The lane strip for the head unit. The model knows only whether this is the rightmost lane, so
+    lanes stays null; target is the rightmost lane, current is filled in once the car is in it."""
+    self._nav_on = True
+    d = {"lanes": None, "current": "rightmost" if self.at_edge else None, "target": "rightmost",
+         "confident": True, "reason": "exit lane"}
+    try:
+      os.makedirs(os.path.dirname(NAV_LANES), exist_ok=True)
+      tmp = NAV_LANES + ".tmp"
+      with open(tmp, "w") as f:
+        json.dump(d, f)
+      os.replace(tmp, NAV_LANES)
     except OSError:
       pass
 
@@ -152,6 +171,8 @@ class LaneHold:
     side = "right" if self.in_zone and not self.at_edge else ""
     if side != self.side:
       self._write(side)
+    if not self.in_zone:
+      self._nav_on = False
     text = (BANNER_EDGE if self.at_edge else BANNER_ZONE) if self.in_zone else ""
     if text != self._banner or (text and self._frame % 40 == 0):
       try:
@@ -163,11 +184,18 @@ class LaneHold:
         pass
       self._banner = text
 
+    if self.in_zone and (self._frame % NAV_EVERY == 0 or not self._nav_on):
+      self._write_nav()
+
     meta = model.meta
     state, direction = meta.laneChangeState, meta.laneChangeDirection
     chime = False
+    self.merge_cue = ""
     if state == LaneChangeState.laneChangeStarting and direction != LaneChangeDirection.none:
-      self._dir = "left" if direction == LaneChangeDirection.left else "right"
+      d = "left" if direction == LaneChangeDirection.left else "right"
+      if self._prev_state != LaneChangeState.laneChangeStarting:
+        self.merge_cue = d
+      self._dir = d
     elif self._prev_state == LaneChangeState.laneChangeStarting and self._dir:
       self._pending, self._t, self._chimes = self._dir, 0., 0
     self._prev_state = state

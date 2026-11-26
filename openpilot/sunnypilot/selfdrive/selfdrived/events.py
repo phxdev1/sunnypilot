@@ -282,6 +282,24 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.none, AudibleAlertSP.canopyBlinkerOff, 3.),
   },
 
+  # Zia says "Merge left." / "Merge right." as each lane change starts. Sound only, so the stock
+  # lane change alert keeps the screen.
+  EventNameSP.canopyMergeLeft: {
+    ET.PERMANENT: Alert(
+      "",
+      "",
+      AlertStatus.normal, AlertSize.none,
+      Priority.MID, VisualAlert.none, AudibleAlertSP.canopyMergeLeft, 1.6),
+  },
+
+  EventNameSP.canopyMergeRight: {
+    ET.PERMANENT: Alert(
+      "",
+      "",
+      AlertStatus.normal, AlertSize.none,
+      Priority.MID, VisualAlert.none, AudibleAlertSP.canopyMergeRight, 1.6),
+  },
+
   EventNameSP.canopyGreenLight: {
     ET.PERMANENT: Alert(
       "",

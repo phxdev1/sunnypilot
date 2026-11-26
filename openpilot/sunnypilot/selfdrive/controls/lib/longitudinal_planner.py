@@ -88,6 +88,10 @@ class LongitudinalPlannerSP:
       if self.lane_hold.update(sm[self.resolver._gps_location_service], sm['modelV2'], CS, v_ego):
         self.events_sp.add(custom.OnroadEventSP.EventName.canopyBlinkerOff)
         cloudlog.event("canopy_blinker_off", in_zone=self.lane_hold.in_zone, at_edge=self.lane_hold.at_edge)
+      if self.lane_hold.merge_cue == "left":
+        self.events_sp.add(custom.OnroadEventSP.EventName.canopyMergeLeft)
+      elif self.lane_hold.merge_cue == "right":
+        self.events_sp.add(custom.OnroadEventSP.EventName.canopyMergeRight)
     except Exception:
       cloudlog.exception("canopy lane hold failed")
 
