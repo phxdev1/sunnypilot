@@ -21,11 +21,13 @@ import math
 import os
 import time
 
-from openpilot.sunnypilot.canopy import banner
+from openpilot.sunnypilot.canopy import banner, parking_release
 
 GARAGE_PATH = "/data/canopy/garage.json"
 SOURCE = "garage"
 TEXT = "Garage mode"
+RELEASE_SOURCE = "parking_release"
+RELEASE_TEXT = "Parking: you steer"
 MS_TO_MPH = 2.23694
 
 ZONE_M = 40.0
@@ -149,6 +151,8 @@ class GaragePark:
       self.last_event = ("start", {"dist_m": round(d, 1), "mph": round(mph, 1), "wall": round(wall, 1)})
       self._live(now, wall, force=True, active=True, dist_m=round(d, 1), mph=round(mph, 1), gear=gear, secs=0.0,
                  heading_err_deg=round(angle_diff(self._bearing, self.cfg["heading"]), 1))
+      if parking_release.request(SOURCE, wall):
+        self._post(RELEASE_SOURCE, RELEASE_TEXT, "heads_up", BANNER_TIMEOUT_S)
       return True
 
     self.min_dist = min(self.min_dist, d)

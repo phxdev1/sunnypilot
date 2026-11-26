@@ -5,11 +5,14 @@ This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
 
+import time
+
 from openpilot.cereal import log, custom
 
 from opendbc.car import structs
 from opendbc.car.hyundai.values import HyundaiFlags
 from openpilot.common.params import Params
+from openpilot.sunnypilot.canopy import parking_release
 from openpilot.sunnypilot.mads.helpers import MadsSteeringModeOnBrake, read_steering_mode_param, MADS_NO_ACC_MAIN_BUTTON
 from openpilot.sunnypilot.mads.state import StateMachine, GEARS_ALLOW_PAUSED_SILENT
 
@@ -41,6 +44,7 @@ class ModularAssistiveDrivingSystem:
     self.state_machine = StateMachine(self)
     self.events = self.selfdrive.events
     self.events_sp = self.selfdrive.events_sp
+    self._canopy_release = parking_release.Taker()
     self.disengage_on_accelerator = Params().get_bool("DisengageOnAccelerator")
     if self.CP.brand == "hyundai":
       if self.CP.flags & (HyundaiFlags.HAS_LDA_BUTTON | HyundaiFlags.CANFD):
@@ -179,6 +183,12 @@ class ModularAssistiveDrivingSystem:
             self.events_sp.add(EventNameSP.lkasDisable)
         else:
           self.events_sp.add(EventNameSP.lkasEnable)
+
+    if self._canopy_release.poll(time.time()) and self.enabled and CS.gearShifter != GearShifter.reverse and CS.vEgo < 5.4:
+      if self.selfdrive.enabled:
+        self.events_sp.add(EventNameSP.manualSteeringRequired)
+      else:
+        self.events_sp.add(EventNameSP.lkasDisable)
 
     if not CS.cruiseState.available and not self.no_main_cruise:
       self.events.remove(EventName.buttonEnable)
