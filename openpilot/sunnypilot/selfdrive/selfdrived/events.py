@@ -318,6 +318,15 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.MID, VisualAlert.none, AudibleAlertSP.canopyGarageEnd, 2.),
   },
 
+  # A place he has taken the wheel back 2+ times: chime and Zia's heads-up; the banner carries the words
+  EventNameSP.canopyTroubleSpot: {
+    ET.PERMANENT: Alert(
+      "",
+      "",
+      AlertStatus.normal, AlertSize.none,
+      Priority.MID, VisualAlert.none, AudibleAlertSP.canopyTroubleSpot, 3.),
+  },
+
   EventNameSP.canopyMergeRight: {
     ET.PERMANENT: Alert(
       "",

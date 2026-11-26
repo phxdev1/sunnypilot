@@ -127,6 +127,7 @@ struct SelfdriveStateSP @0x81c2f05a394cf4af {
     canopyBlinkerOff @43;
     canopyRightBlindspot @44;
     canopyGarageEnd @45;
+    canopyTroubleSpot @46;
   }
 }
 
@@ -387,6 +388,7 @@ struct OnroadEventSP @0xda96579883444c35 {
     canopyRightBlindspot @35;
     canopyGarageStart @36;
     canopyGarageEnd @37;
+    canopyTroubleSpot @38;
   }
 }
 

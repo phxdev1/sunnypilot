@@ -41,6 +41,8 @@ SLOTS = {
   # A right change starting while the blind spot reads occupied: a loud chime, then Zia "Blind spot."
   # It warns only; the change goes on (he checks his right). Stock fallback is the loud warning chime.
   "right_blindspot": ("canopyRightBlindspot", "warning.wav"),
+  # A trouble spot ahead (he has taken over there before): a chime, then Zia "Heads up, tricky spot."
+  "trouble_spot": ("canopyTroubleSpot", "prompt_single_high.wav"),
 }
 
 

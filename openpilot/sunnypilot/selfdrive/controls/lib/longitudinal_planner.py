@@ -23,6 +23,7 @@ from openpilot.sunnypilot.canopy.red_light import RedLight
 from openpilot.sunnypilot.canopy.garage import GaragePark
 from openpilot.sunnypilot.canopy.auto_resume import AutoResumeShadow
 from openpilot.sunnypilot.canopy.lane_hold import LaneHold
+from openpilot.sunnypilot.canopy.trouble_spot import TroubleSpots
 from openpilot.common.swaglog import cloudlog
 
 LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
@@ -44,6 +45,7 @@ class LongitudinalPlannerSP:
     self.red_light = RedLight()
     self.garage = GaragePark()
     self.auto_resume = AutoResumeShadow()
+    self.trouble = TroubleSpots()
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
 
@@ -129,6 +131,20 @@ class LongitudinalPlannerSP:
         cloudlog.event("canopy_resume_shadow", **self.auto_resume.last_row)
     except Exception:
       cloudlog.exception("canopy auto resume shadow failed")
+
+    # Canopy: trouble spot ahead (a place he keeps taking the wheel back): chime + Zia heads-up live;
+    # the set-speed trim going in is SHADOW ONLY (logged, never added to the targets below).
+    try:
+      lm = sm['liveMapDataSP']
+      limit = lm.speedLimit if lm.speedLimitValid and lm.speedLimit > 0 else None
+      if self.trouble.update(sm[self.resolver._gps_location_service], CS, v_ego, bool(sm['selfdriveState'].enabled),
+                             bool(sm['carControl'].latActive), v_cruise_cluster, limit):
+        self.events_sp.add(custom.OnroadEventSP.EventName.canopyTroubleSpot)
+        cloudlog.event("canopy_trouble_spot", **self.trouble.last_fire)
+      if self.trouble.last_row:
+        cloudlog.event("canopy_trouble_shadow", **self.trouble.last_row)
+    except Exception:
+      cloudlog.exception("canopy trouble spot failed")
 
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp)
