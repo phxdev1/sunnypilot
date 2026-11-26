@@ -188,6 +188,8 @@ procs += [
 
   # Canopy: path, lanes, lead and events for the car screen and Zia, tailnet only
   PythonProcess("canopy_hudd", "openpilot.sunnypilot.canopy.hudd", only_onroad),
+  # Canopy: traffic to Forge goes over the comma's LTE, home Wi-Fi first (Mark, Nov 26)
+  PythonProcess("canopy_forge_route", "openpilot.sunnypilot.canopy.forge_route", always_run),
 ]
 
 if os.path.exists("../../sunnypilot/sunnylink/uploader.py"):
