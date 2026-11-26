@@ -10,6 +10,8 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
                5 frames/s and only past 0.1 m or 0.5 mph, and at least 2 frames/s (see hud_due).
   GET /events  Server-Sent Events, only when something happens (engage, lead, stop, intent).
   GET /health  one JSON line.
+  GET /lookahead  the local Look Ahead answer from the last second (watch only, nothing in the planner
+               reads it): view, age_s, n, err, off.
   /hud frame "v": 2 adds "lead.mph" (lead car speed over the ground) and "nav_lanes": the nav lane strip
                (lanes, current, target, confident) passed through from /dev/shm/canopy/nav_lanes.json while
                that file is under 2 s old, else null. The nav side writes it; hudd never guesses lanes.
@@ -45,6 +47,7 @@ Speeds in mph (Mark: the assistant always runs in MPH).
 
 The comma's own LTE carries this on the road, so no phone hotspot step is needed.
 Turn it off without a rebuild: touch /data/canopy/hud_off (checked every second).
+The local Look Ahead thread stops on its own flag too, /data/canopy/lookahead_off, and offroad.
 """
 import json
 import os
@@ -59,6 +62,7 @@ from openpilot.common.params import Params
 
 from openpilot.sunnypilot.canopy import banner
 from openpilot.sunnypilot.canopy import leadkind
+from openpilot.sunnypilot.canopy import lookahead_local
 from openpilot.sunnypilot.canopy import sounds as canopy_sounds
 from openpilot.sunnypilot.canopy import params_file
 
@@ -70,11 +74,14 @@ VOICE_LIVE = "/data/canopy/voice_merge_live"
 VOICE_LIVE_FREEWAY = "/data/canopy/voice_merge_live_freeway"
 HZ = 10
 MS_TO_MPH = 2.23694
+LA_OFF = "/data/canopy/lookahead_off"
+LA_EVERY_S = 1.0
 _ASP = custom.SelfdriveStateSP.AudibleAlert
 CUE_SLOTS = {getattr(_ASP, field): slot for slot, (field, _) in canopy_sounds.SLOTS.items()}
 _params = Params()
 _GPS = get_gps_location_service(_params)
 _lk = {"obj": None}
+_la = {"view": None, "t": 0.0, "err": None, "n": 0}
 
 _params_cache = {"mtime": None, "data": None}
 
@@ -445,6 +452,51 @@ def publish_lossy(qs, item, keep_free=16):
           pass
 
 
+def onroad_now() -> bool:
+  return _params.get_bool("IsOnroad")
+
+
+def lookahead_step(sm, la, onroad):
+  """One second of the local Look Ahead, watch only: nothing in the planner reads it.
+  Returns the view it wrote, or None when it skipped or something went wrong."""
+  try:
+    sm.update(0)
+    if os.path.exists(LA_OFF) or not onroad():
+      _la["view"] = None
+      return None
+    g = sm[_GPS]
+    if sm.recv_frame[_GPS] == 0 or not getattr(g, "hasFix", True):
+      return None
+    mph = sm["carState"].vEgo * MS_TO_MPH
+    v = la.view(g.latitude, g.longitude, g.bearingDeg, mph)
+    la.write_shm(v)
+    la.log(v, g.latitude, g.longitude, g.bearingDeg, mph)
+    _la["view"], _la["t"] = v, time.monotonic()
+    _la["n"] += 1
+    _la["err"] = None
+    return v
+  except Exception as e:  # watch only: never take anything down over it
+    _la["err"] = str(e)[:200]
+    return None
+
+
+def lookahead_loop(sleep=time.sleep, sm=None, la=None, onroad=None):
+  """Answers Look Ahead locally once a second for the whole drive. Its own thread, its own
+  SubMaster and reader, and it runs at the process's nice level (main already lowered it)."""
+  if sm is None:
+    sm = messaging.SubMaster(["carState", _GPS])
+  if la is None:
+    la = lookahead_local.LookAhead()
+  if onroad is None:
+    onroad = onroad_now
+  while True:
+    try:
+      lookahead_step(sm, la, onroad)
+    except Exception as e:
+      _la["err"] = str(e)[:200]
+    sleep(LA_EVERY_S)
+
+
 def pump():
   sm = messaging.SubMaster(["modelV2", "carState", "selfdriveState", "radarState", "carControl",
                               "liveCalibration", _GPS])
@@ -589,6 +641,10 @@ class H(BaseHTTPRequestHandler):
       return self._json(200, {"banner": banner.current()})
     if path == "/garage":
       return self._json(200, {"garage": garage_state()})
+    if path == "/lookahead":
+      return self._json(200, {"lookahead": _la["view"],
+                              "age_s": round(time.monotonic() - _la["t"], 1) if _la["view"] else None,
+                              "n": _la["n"], "err": _la["err"], "off": os.path.exists(LA_OFF)})
     if path == "/hud":
       return self._sse(_clients_hud)
     if path == "/events":
@@ -596,6 +652,7 @@ class H(BaseHTTPRequestHandler):
     if path == "/health":
       body = json.dumps({"ok": True, "hud_clients": len(_clients_hud), "event_clients": len(_clients_ev),
                          "frame_age_s": _r(time.monotonic() - _last["t"], 1) if _last["frame"] else None,
+                         "lookahead_n": _la["n"],
                          "off": os.path.exists(OFF_FLAG)}).encode()
       self.send_response(200)
       self.send_header("Content-Type", "application/json")
@@ -614,6 +671,7 @@ def main():
   except OSError:
     pass
   threading.Thread(target=pump, daemon=True).start()
+  threading.Thread(target=lookahead_loop, daemon=True).start()
   srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
   srv.daemon_threads = True
   srv.serve_forever()
