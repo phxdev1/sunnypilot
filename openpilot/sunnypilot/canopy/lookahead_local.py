@@ -21,6 +21,7 @@ MATCH_DEG = 45
 ROUTE_ON_M = 60
 ROUTE_ON_DEG = 60
 ITEM_LAT_M = 35
+JUNCTION_LAT_M = 45
 EVENT_LAT_M = 60
 ITEM_DEG = 60
 HEADING_FALLBACK_M = 300
@@ -381,8 +382,9 @@ class LookAhead:
         if not raw_items:
             return [], path_len
 
-        pad_lat = max(ITEM_LAT_M, EVENT_LAT_M) / M_PER_DEG
-        pad_lon = max(ITEM_LAT_M, EVENT_LAT_M) / (M_PER_DEG * cos_lat)
+        pad_m = max(ITEM_LAT_M, JUNCTION_LAT_M, EVENT_LAT_M)
+        pad_lat = pad_m / M_PER_DEG
+        pad_lon = pad_m / (M_PER_DEG * cos_lat)
         lats = [p[0] for p in path]
         lons = [p[1] for p in path]
         lat_min = min(lats) - pad_lat
@@ -422,7 +424,12 @@ class LookAhead:
             if best is None:
                 continue
             lat_m, along, bearing = best
-            limit = EVENT_LAT_M if it.get("k") == "az511" else ITEM_LAT_M
+            if it.get("k") == "az511":
+                limit = EVENT_LAT_M
+            elif it.get("k") in ("intersection", "signal"):
+                limit = JUNCTION_LAT_M
+            else:
+                limit = ITEM_LAT_M
             if along < 0.0 or along > path_len + 1e-9:
                 continue
             if lat_m > limit:
