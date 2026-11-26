@@ -23,6 +23,16 @@ TURN_DESIRES = {
 
 BLINKER_HOLD_FRAMES = int(0.5 / DT_MDL)  # Canopy: hold each side 0.5 s past its last lit frame
 
+# Canopy hold-to-merge: plannerd (canopy/lane_hold.py) writes "right" here while the car is before
+# one of the route's exits and not yet in the rightmost lane. Only then does a held right blinker get
+# another lane change after the first; everywhere else a hold is one change. Each extra change still
+# waits HOLD_SETTLE_TIME, the blind spot gate and the road edge check, and a hold stops at
+# MAX_HOLD_CHANGES.
+HOLD_FILE = "/dev/shm/canopy_hold"
+HOLD_READ_FRAMES = 5
+HOLD_SETTLE_TIME = 1.5
+MAX_HOLD_CHANGES = 4
+
 
 class _HeldBlinkers:
   """carState with the turn signals held through the dark phase of each flash, so a quick
@@ -48,10 +58,26 @@ class DesireHelper:
     self.lane_turn_controller = LaneTurnController(self)
     self.lane_turn_direction = TurnDirection.none
     self.enable_bsm = False  # set from has_bsm(CP) by modeld
+    self.hold_side = ""      # Canopy: "right" while a held right blinker may keep going
+    self._hold_read = 0
+    self.hold_changes = 0    # lane changes made on this hold
 
   @staticmethod
   def get_lane_change_direction(CS):
     return LaneChangeDirection.left if CS.leftBlinker else LaneChangeDirection.right
+
+  def _read_hold_side(self):
+    self._hold_read += 1
+    if self._hold_read % HOLD_READ_FRAMES:
+      return
+    try:
+      with open(HOLD_FILE) as f:
+        self.hold_side = f.read(8).strip()
+    except OSError:
+      self.hold_side = ""
+
+  def _hold_allows(self, direction) -> bool:
+    return self.hold_side == "right" and direction == LaneChangeDirection.right and self.hold_changes < MAX_HOLD_CHANGES
 
   def _hold_blinkers(self, left, right):
     for i, lit in enumerate((left, right)):
@@ -60,6 +86,7 @@ class DesireHelper:
 
   def update(self, carstate, lateral_active, lane_change_prob, left_edge_detected=False, right_edge_detected=False):
     carstate = _HeldBlinkers(carstate, *self._hold_blinkers(carstate.leftBlinker, carstate.rightBlinker))
+    self._read_hold_side()
     self.alc.update_params()
     self.alc.bsm_ok = self.enable_bsm and carstate.canValid
     self.lane_turn_controller.update_params()
@@ -77,6 +104,8 @@ class DesireHelper:
       self.lane_change_direction = LaneChangeDirection.none
       self.lane_change_timer = 0.0
     else:
+      if self.lane_change_state == LaneChangeState.off:
+        self.hold_changes = 0
       if self.lane_change_state == LaneChangeState.off and one_blinker and not self.prev_one_blinker and not below_lane_change_speed:
         self.lane_change_state = LaneChangeState.preLaneChange
         self.lane_change_timer = 0.0
@@ -86,6 +115,10 @@ class DesireHelper:
       elif self.lane_change_state == LaneChangeState.preLaneChange:
         # Update lane change direction
         self.lane_change_direction = self.get_lane_change_direction(carstate)
+
+        # Canopy: a hold that was allowed another change loses it the moment the route target is met
+        if self.hold_changes and not self._hold_allows(self.lane_change_direction):
+          self.alc.prev_lane_change = True
 
         torque_applied = carstate.steeringPressed and \
                          ((carstate.steeringTorque > 0 and self.lane_change_direction == LaneChangeDirection.left) or
@@ -129,9 +162,14 @@ class DesireHelper:
 
         elif lane_change_prob < 0.02 and self.lane_change_timer >= LANE_CHANGE_START_TIME:
           self.lane_change_timer = 0.0
+          self.hold_changes += 1
           if one_blinker:
             self.lane_change_state = LaneChangeState.preLaneChange
             self.lane_change_direction = self.get_lane_change_direction(carstate)
+            if self._hold_allows(self.lane_change_direction):
+              # Canopy: still short of the route's exit lane, blinker held: allow one more, after a settle
+              self.alc.prev_lane_change = False
+              self.alc.lane_change_wait_timer = -HOLD_SETTLE_TIME
           else:
             self.lane_change_state = LaneChangeState.off
             self.lane_change_direction = LaneChangeDirection.none

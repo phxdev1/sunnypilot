@@ -274,6 +274,14 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.HIGH, VisualAlert.none, AudibleAlertSP.canopyRedLight, 4.),
   },
 
+  EventNameSP.canopyBlinkerOff: {
+    ET.PERMANENT: Alert(
+      "Lane change done, turn the blinker off",
+      "",
+      AlertStatus.normal, AlertSize.small,
+      Priority.LOW, VisualAlert.none, AudibleAlertSP.canopyBlinkerOff, 3.),
+  },
+
   EventNameSP.canopyGreenLight: {
     ET.PERMANENT: Alert(
       "",

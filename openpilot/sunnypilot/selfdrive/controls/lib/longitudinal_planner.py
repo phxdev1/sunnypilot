@@ -21,6 +21,7 @@ from openpilot.sunnypilot.canopy.move_over import MoveOver
 from openpilot.sunnypilot.canopy.lane_drop import LaneDrop
 from openpilot.sunnypilot.canopy.red_light import RedLight
 from openpilot.sunnypilot.canopy.garage import GaragePark
+from openpilot.sunnypilot.canopy.lane_hold import LaneHold
 from openpilot.common.swaglog import cloudlog
 
 LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
@@ -38,6 +39,7 @@ class LongitudinalPlannerSP:
     self.e2e_alerts_helper = E2EAlertsHelper()
     self.move_over = MoveOver()
     self.lane_drop = LaneDrop()
+    self.lane_hold = LaneHold()
     self.red_light = RedLight()
     self.garage = GaragePark()
     self.accel_boost_sp = AccelBoostSP()
@@ -79,6 +81,15 @@ class LongitudinalPlannerSP:
                            else custom.OnroadEventSP.EventName.canopyLaneDrop)
     except Exception:  # a prompt must never take the planner down
       cloudlog.exception("canopy lane prompts failed")
+
+    # Canopy: hold-to-merge toward the route's exit lane, and a chime when a lane change is done but
+    # the blinker is still on
+    try:
+      if self.lane_hold.update(sm[self.resolver._gps_location_service], sm['modelV2'], CS, v_ego):
+        self.events_sp.add(custom.OnroadEventSP.EventName.canopyBlinkerOff)
+        cloudlog.event("canopy_blinker_off", in_zone=self.lane_hold.in_zone, at_edge=self.lane_hold.at_edge)
+    except Exception:
+      cloudlog.exception("canopy lane hold failed")
 
     # Canopy: red light ahead with cruise on and nobody to stop behind: one chime so he brakes
     try:

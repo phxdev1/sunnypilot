@@ -379,6 +379,7 @@ struct OnroadEventSP @0xda96579883444c35 {
     canopyLaneExit @29;
     canopyRedLight @30;
     canopyGreenLight @31;
+    canopyBlinkerOff @32;
   }
 }
 
