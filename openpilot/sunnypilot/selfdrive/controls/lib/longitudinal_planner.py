@@ -20,6 +20,7 @@ from openpilot.sunnypilot.models.helpers import get_active_bundle
 from openpilot.sunnypilot.canopy.move_over import MoveOver
 from openpilot.sunnypilot.canopy.lane_drop import LaneDrop
 from openpilot.sunnypilot.canopy.red_light import RedLight
+from openpilot.sunnypilot.canopy.garage import GaragePark
 from openpilot.common.swaglog import cloudlog
 
 LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
@@ -38,6 +39,7 @@ class LongitudinalPlannerSP:
     self.move_over = MoveOver()
     self.lane_drop = LaneDrop()
     self.red_light = RedLight()
+    self.garage = GaragePark()
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
 
@@ -86,6 +88,14 @@ class LongitudinalPlannerSP:
                        v_ego=round(v_ego, 2))
     except Exception:
       cloudlog.exception("canopy red light warning failed")
+
+    # Canopy: pulling into the garage at home: a quiet banner on the comma screen, shadow only
+    try:
+      if self.garage.update(sm[self.resolver._gps_location_service], CS, CS.vEgo) and self.garage.last_event:
+        kind, info = self.garage.last_event
+        cloudlog.event(f"canopy_garage_{kind}", **info)
+    except Exception:
+      cloudlog.exception("canopy garage banner failed")
 
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp)

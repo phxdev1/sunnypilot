@@ -9,6 +9,10 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
   GET /hud     Server-Sent Events, about 10 frames/s while a client is connected.
   GET /events  Server-Sent Events, only when something happens (engage, lead, stop, intent).
   GET /health  one JSON line.
+  GET /banner, POST /banner {"source","text","style":"info"|"heads_up","timeout_s"},
+  DELETE /banner?source=NAME   the status banner on the comma screen (canopy/banner.py).
+               Changes also go out on /events as {"type": "banner", "banner": {...} | null},
+               so the car app can follow the same state.
 
 Frame coordinates are the car frame in meters: x forward, y left-positive (model y is
 flipped here so path, lanes, edges and the radar lead all agree).
@@ -26,6 +30,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cereal.messaging as messaging
 
+from openpilot.sunnypilot.canopy import banner
+
 PORT = int(os.environ.get("CANOPY_HUD_PORT", "8870"))
 OFF_FLAG = "/data/canopy/hud_off"
 HZ = 10
@@ -38,6 +44,22 @@ _clients_ev: list[queue.Queue] = []
 _lock = threading.Lock()
 _last = {"frame": None, "t": 0.0}
 _lead = {"state": False, "since": None}
+_banner = {"mtime": None, "last": None}
+
+
+def banner_event():
+  """One banner event when the banner file changed and what shows changed."""
+  m = banner.mtime()
+  if m == _banner["mtime"]:
+    return None
+  _banner["mtime"] = m
+  cur = banner.current()
+  key = None if cur is None else (cur["source"], cur["text"], cur["style"])
+  if key == _banner["last"]:
+    return None
+  _banner["last"] = key
+  b = None if cur is None else {k: cur[k] for k in ("source", "text", "style", "until")}
+  return json.dumps({"type": "banner", "banner": b, "t": _r(time.time(), 2)}, separators=(",", ":"))
 
 
 def _r(v, n=2):
@@ -133,8 +155,18 @@ def pump():
   sm = messaging.SubMaster(["modelV2", "carState", "selfdriveState", "radarState", "carControl"])
   prev = None
   next_t = 0.0
+  next_banner = 0.0
   while True:
     sm.update(100)
+    if time.monotonic() >= next_banner:
+      next_banner = time.monotonic() + 0.5
+      if _clients_ev and not os.path.exists(OFF_FLAG):
+        try:
+          ev = banner_event()
+          if ev:
+            publish(_clients_ev, ev)
+        except Exception:
+          pass
     if not sm.updated["modelV2"]:
       continue
     now = time.monotonic()
@@ -188,8 +220,40 @@ class H(BaseHTTPRequestHandler):
         if q in qs:
           qs.remove(q)
 
+  def _json(self, code, obj):
+    body = json.dumps(obj).encode()
+    self.send_response(code)
+    self.send_header("Content-Type", "application/json")
+    self.send_header("Content-Length", str(len(body)))
+    self.end_headers()
+    self.wfile.write(body)
+
+  def do_POST(self):
+    if self.path.split("?")[0] != "/banner":
+      return self._json(404, {"ok": False})
+    try:
+      n = int(self.headers.get("Content-Length") or 0)
+      if n > 2048:
+        return self._json(413, {"ok": False, "error": "too big"})
+      d = json.loads(self.rfile.read(n) or b"{}")
+      err = banner.post(d.get("source"), d.get("text"), d.get("style", "info"), d.get("timeout_s", 10))
+    except (ValueError, OSError, AttributeError) as e:
+      err = str(e)[:120]
+    if err:
+      return self._json(400, {"ok": False, "error": err})
+    return self._json(200, {"ok": True, "banner": banner.current()})
+
+  def do_DELETE(self):
+    path, _, q = self.path.partition("?")
+    if path != "/banner":
+      return self._json(404, {"ok": False})
+    src = dict(p.split("=", 1) for p in q.split("&") if "=" in p).get("source", "")
+    return self._json(200, {"ok": True, "cleared": banner.clear(src)})
+
   def do_GET(self):
     path = self.path.split("?")[0]
+    if path == "/banner":
+      return self._json(200, {"banner": banner.current()})
     if path == "/hud":
       return self._sse(_clients_hud)
     if path == "/events":
