@@ -266,6 +266,14 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 4.),
   },
 
+  EventNameSP.canopyRedLight: {
+    ET.PERMANENT: Alert(
+      "Red light ahead",
+      "ProPILOT won't stop for it, brake",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.HIGH, VisualAlert.none, AudibleAlert.prompt, 4.),
+  },
+
   EventNameSP.e2eChime: {
     ET.PERMANENT: Alert(
       "",

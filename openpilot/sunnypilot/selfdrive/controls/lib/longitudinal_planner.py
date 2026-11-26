@@ -19,6 +19,7 @@ from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
 from openpilot.sunnypilot.models.helpers import get_active_bundle
 from openpilot.sunnypilot.canopy.move_over import MoveOver
 from openpilot.sunnypilot.canopy.lane_drop import LaneDrop
+from openpilot.sunnypilot.canopy.red_light import RedLight
 from openpilot.common.swaglog import cloudlog
 
 LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
@@ -36,6 +37,7 @@ class LongitudinalPlannerSP:
     self.e2e_alerts_helper = E2EAlertsHelper()
     self.move_over = MoveOver()
     self.lane_drop = LaneDrop()
+    self.red_light = RedLight()
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
 
@@ -75,6 +77,15 @@ class LongitudinalPlannerSP:
                            else custom.OnroadEventSP.EventName.canopyLaneDrop)
     except Exception:  # a prompt must never take the planner down
       cloudlog.exception("canopy lane prompts failed")
+
+    # Canopy: red light ahead with cruise on and nobody to stop behind: one chime so he brakes
+    try:
+      if self.red_light.update(sm[self.resolver._gps_location_service], sm['modelV2'], CS, sm['radarState'].leadOne, v_ego):
+        self.events_sp.add(custom.OnroadEventSP.EventName.canopyRedLight)
+        cloudlog.event("canopy_red_light", signal=self.red_light.signal, distance=round(self.red_light.distance, 1),
+                       v_ego=round(v_ego, 2))
+    except Exception:
+      cloudlog.exception("canopy red light warning failed")
 
     self.sla.update(long_enabled, long_override, v_ego, a_ego, v_cruise_cluster, self.resolver.speed_limit,
                     self.resolver.speed_limit_final_last, has_speed_limit, self.resolver.distance, self.events_sp)

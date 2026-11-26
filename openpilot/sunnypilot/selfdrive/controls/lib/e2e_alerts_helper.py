@@ -8,6 +8,7 @@ See the LICENSE.md file in the root directory for more details.
 from openpilot.cereal import messaging, custom
 
 from openpilot.common.params import Params
+from openpilot.common.swaglog import cloudlog
 from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
@@ -71,7 +72,9 @@ class E2EAlertsHelper:
       self.last_moving_frame = self.frame
     recent_moving = self.last_moving_frame == -1 or (self.frame - self.last_moving_frame) * DT_MDL < 2.0
 
-    self.allowed = not moving and not CS.gasPressed and not CC.enabled and not recent_moving
+    # Canopy: was `not CC.enabled`, which never holds on a steer-only car with openpilot engaged at a light.
+    # What matters is that openpilot isn't driving the pedals, so it can't pull away on its own.
+    self.allowed = not moving and not CS.gasPressed and not CC.longActive and not recent_moving
 
     # Green Light Alert
     green_light_trigger = False
@@ -163,6 +166,16 @@ class E2EAlertsHelper:
       self.allowed and self.lead_depart_armed,
       lead_depart_trigger
     )
+
+    # Canopy: a blinker on at the light means a turn lane, which often has its own arrow. The model
+    # can't tell the through green from the arrow, so don't chime; log it for the light-read scorecard.
+    if self.green_light_alert:
+      CS = sm['carState']
+      if CS.leftBlinker or CS.rightBlinker:
+        self.green_light_alert = False
+        cloudlog.event("canopy_green_ambiguous", left=bool(CS.leftBlinker), right=bool(CS.rightBlinker))
+      else:
+        cloudlog.event("canopy_green")
 
     if self.green_light_alert or self.lead_depart_alert:
       events_sp.add(custom.OnroadEventSP.EventName.e2eChime)
