@@ -8,8 +8,8 @@ Starts when all hold for START_HOLD_S:
   in Drive, under MAX_MPH, within ZONE_M of the garage spot, nose within HEADING_TOL_DEG
   of the garage heading (GPS bearing, only trusted above MIN_BEARING_MPH; slower, the last
   trusted bearing stands).
-Ends on Park (parked), or when he drives off: out past EXIT_M, over EXIT_MPH, or Reverse
-for REVERSE_S (backing out, not parking).
+Ends on Park (parked), or when he drives off: out past EXIT_M or over EXIT_MPH. Reverse ends it
+at once (Mark, Nov 26: no blind reverse parking; garage and lot modes are forward-only, nose-in).
 
 The garage spot and heading are not in the repo: /data/canopy/garage.json
   {"lat": .., "lon": .., "heading_deg": .., "zone_m": 40}
@@ -34,7 +34,7 @@ EXIT_MPH = 15.0
 MIN_BEARING_MPH = 1.5
 HEADING_TOL_DEG = 50.0
 START_HOLD_S = 1.0
-REVERSE_S = 2.0
+REVERSE_S = 0.0         # Reverse ends it on the first frame
 REFRESH_S = 20.0
 BANNER_TIMEOUT_S = 45.0
 CONFIG_RETRY_S = 30.0
@@ -117,6 +117,9 @@ class GaragePark:
     wall = time.time() if wall is None else wall
     self.last_event = None
     self._load(now)
+    if self.active and _gear(car_state) == "reverse":  # forward-only: Reverse ends it, GPS or not
+      self._end("reverse", now, wall)
+      return True
     if self.cfg is None or gps is None or not getattr(gps, "hasFix", True):
       return False
 
