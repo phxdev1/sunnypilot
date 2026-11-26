@@ -15,6 +15,9 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
                so the car app can follow the same state.
   GET /garage  live garage parking state (also on /events as {"type": "garage", ...}, 2/s
                at most while parking, one final {"active": false, "reason"} at the end).
+  /events also carries {"type": "cue", "slot", "sound": "custom"|"stock"|"silent", "played", "mph",
+               "text", "lead_m"} each time a Canopy prompt fires, so Zia can speak only when the
+               comma stayed silent and keep quiet right after a cue that already played.
 
 Frame coordinates are the car frame in meters: x forward, y left-positive (model y is
 flipped here so path, lanes, edges and the radar lead all agree).
@@ -31,13 +34,31 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cereal.messaging as messaging
+from cereal import custom
+from openpilot.common.params import Params
 
 from openpilot.sunnypilot.canopy import banner
+from openpilot.sunnypilot.canopy import sounds as canopy_sounds
 
 PORT = int(os.environ.get("CANOPY_HUD_PORT", "8870"))
 OFF_FLAG = "/data/canopy/hud_off"
 HZ = 10
 MS_TO_MPH = 2.23694
+_ASP = custom.SelfdriveStateSP.AudibleAlert
+CUE_SLOTS = {getattr(_ASP, field): slot for slot, (field, _) in canopy_sounds.SLOTS.items()}
+_params = Params()
+
+
+def cue_sound(slot: str) -> str:
+  """What the comma plays for this cue: custom, stock or silent (QuietMode silences prompts)."""
+  try:
+    if _params.get_bool("QuietMode"):
+      return "silent"
+  except Exception:
+    pass
+  if canopy_sounds.read_wav(os.path.join(canopy_sounds.SOUND_DIR, f"{slot}.wav")) is not None:
+    return "custom"
+  return "stock" if canopy_sounds.SLOTS[slot][1] else "silent"
 # model plan points to send (index into the 33 point model plan, roughly 0 to 190 m)
 IDX = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 23, 26]
 
@@ -136,6 +157,7 @@ def build_frame(sm) -> dict:
     "lane_change_dir": str(md.meta.laneChangeDirection),
     "brake_soon": _r(max(md.meta.disengagePredictions.brake3MetersPerSecondSquaredProbs or [0])),
     "alert": ss.alertText1 or None,
+    "sound": int(ss.alertSound.raw),
   }
   if lead.present:
     f["lead"] = {"m": _r(lead.dRel, 1), "y": _r(lead.yRel, 2), "rel_mph": _r(lead.vRel * MS_TO_MPH, 1),
@@ -164,6 +186,13 @@ def events_from(prev, cur) -> list[dict]:
     ev.append({"type": "lane_change", "state": cur["lane_change"], "dir": cur["lane_change_dir"]})
   if prev["alert"] != cur["alert"] and cur["alert"]:
     ev.append({"type": "alert", "text": cur["alert"]})
+  if prev["sound"] != cur["sound"] and cur["sound"] in CUE_SLOTS:
+    # a Canopy prompt fired: say which, and whether the comma made a sound, so Zia can speak only
+    # into silence (garage, QuietMode) and stay quiet right after a cue that already played
+    slot = CUE_SLOTS[cur["sound"]]
+    snd = cue_sound(slot)
+    ev.append({"type": "cue", "slot": slot, "sound": snd, "played": snd != "silent", "mph": cur["mph"],
+               "text": cur["alert"], "lead_m": (cur["lead"] or {}).get("m")})
   for e in ev:
     e["t"] = cur["t"]
   return ev
