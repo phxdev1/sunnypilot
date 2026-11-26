@@ -10,7 +10,8 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
   GET /events  Server-Sent Events, only when something happens (engage, lead, stop, intent).
   GET /health  one JSON line.
 
-Frame coordinates are the car frame in meters: x forward, y left, from the model.
+Frame coordinates are the car frame in meters: x forward, y left-positive (model y is
+flipped here so path, lanes, edges and the radar lead all agree).
 Speeds in mph (Mark: the assistant always runs in MPH).
 
 The comma's own LTE carries this on the road, so no phone hotspot step is needed.
@@ -47,12 +48,12 @@ def _pick(xyz, idx):
   x, y = list(xyz.x), list(xyz.y)
   if len(x) < 2:
     return []
-  return [[_r(x[i], 1), _r(y[i])] for i in idx if i < len(x)]
+  return [[_r(x[i], 1), _r(-y[i])] for i in idx if i < len(x)]  # modelV2 y is right-positive
 
 
 def _ys(xyz, idx):
   y = list(xyz.y)
-  return [_r(y[i]) for i in idx if i < len(y)]
+  return [_r(-y[i]) for i in idx if i < len(y)]  # flip to left-positive
 
 
 def _xs(xyz, idx):
@@ -76,7 +77,7 @@ def build_frame(sm) -> dict:
     "path": _pick(md.position, IDX),
     # lane lines and road edges share one x list: lanes far left, left, right, far right
     "lane_x": _xs(md.laneLines[0], IDX) if len(md.laneLines) else [],
-    "lanes": [{"p": _r(p), "y": _ys(l, IDX)} for l, p in zip(md.laneLines, md.laneLineProbs)],
+    "lanes": [{"p": _r(p), "y": _ys(l, IDX)} for l, p in zip(md.laneLines, md.laneLineProbs)],  # far left first
     "edges": [_ys(e, IDX) for e in md.roadEdges],
     "lead": None,
     "should_stop": bool(md.action.shouldStop),
