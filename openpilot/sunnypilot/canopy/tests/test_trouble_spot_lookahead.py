@@ -4,9 +4,12 @@ A spot off to the side never passes the straight-ahead bearing check. If the loc
 runs past it, the spot may still fire (via "path") when the gate turns look_ahead_comma on, and logs
 one shadow row per approach when it does not.
 """
+import builtins
 import json
 import math
+import os
 import types
+from unittest import mock
 
 from openpilot.sunnypilot.canopy import trouble_spot as ts
 
@@ -172,3 +175,31 @@ def test_straight_ahead_still_fires_on_the_line(tmp_path):
   assert len(calls) == 1 and calls[0][0] == "trouble"
   assert g.calls == []
   assert not la_shadow.exists()
+
+
+def test_view_file_is_read_at_most_twice_a_second(tmp_path):
+  g = FakeGates(live=False)
+  spot = side_spot()
+  obj, _, _, view_path, _ = build(tmp_path, g, [spot])
+  write_view(view_path, 1000.0, spot)
+
+  reads, real_open = [], builtins.open
+
+  def counting_open(file, *a, **k):
+    if str(file) == str(view_path):
+      reads.append(file)
+    return real_open(file, *a, **k)
+
+  with mock.patch("builtins.open", counting_open):
+    # Two frames 0.1 s apart: the file is stat'ed and parsed once.
+    assert run(obj, 50.0, 1000.0) is False
+    assert run(obj, 50.1, 1000.1) is False
+    assert len(reads) == 1
+
+    # hudd rewrites the view; past the recheck window the new one is picked up.
+    write_view(view_path, 1000.5, spot, source="map")
+    os.utime(view_path, (1000.5, 1000.5))  # the write clock here is too coarse to move the mtime
+    assert run(obj, 50.6, 1000.6) is False
+    assert len(reads) == 2
+    assert obj._path_view(50.6, 1000.6)["source"] == "map"
+    assert len(reads) == 2

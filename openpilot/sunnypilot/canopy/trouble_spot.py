@@ -58,6 +58,7 @@ LA_SHADOW_PATH = "/data/canopy/lookahead_cue_shadow.jsonl"
 LA_FEATURE = "look_ahead_comma"
 LA_MAX_AGE_S = 3.0
 LA_MATCH_M = 40.0
+LA_RECHECK_S = 0.5      # hudd rewrites the view once a second; stat it at most this often
 
 
 def dist_m(lat1, lon1, lat2, lon2) -> float:
@@ -107,6 +108,9 @@ class TroubleSpots:
     self.last_fire = None   # dict for the caller to log
     self.last_row = None    # finished shadow row
     self._la_cond = None    # the gate cell at the last live path fire
+    self._la_view = None    # the last parsed Look Ahead view
+    self._la_mtime = None   # and the file mtime it came from
+    self._la_stat_t = -1e9  # when we last stat'ed the file
 
   def _load(self, now):
     if now - self._check_t < RELOAD_S:
@@ -160,18 +164,34 @@ class TroubleSpots:
           pass
     self._la_cond = None
 
-  def _path_view(self, wall):
-    """The comma's last Look Ahead view, or None if off, stale or unreadable."""
+  def _path_view(self, now, wall):
+    """The comma's last Look Ahead view, or None if off, stale or unreadable.
+
+    update() runs at the planner rate and hudd rewrites the file once a second, so stat it at most
+    every LA_RECHECK_S and re-parse only when the mtime moved. The off flag and the age check still
+    run on every call, against the cached view.
+    """
     try:
       if os.path.exists(self.off_flag):
         return None
     except OSError:
       return None
-    try:
-      with open(self.lookahead_path) as f:
-        view = json.load(f)
-    except (OSError, ValueError, TypeError):
-      return None
+    if now - self._la_stat_t >= LA_RECHECK_S:
+      self._la_stat_t = now
+      try:
+        mt = os.stat(self.lookahead_path).st_mtime
+      except OSError:
+        self._la_view, self._la_mtime = None, None
+        return None
+      if mt != self._la_mtime:
+        self._la_mtime = mt
+        try:
+          with open(self.lookahead_path) as f:
+            view = json.load(f)
+        except (OSError, ValueError, TypeError):
+          view = None
+        self._la_view = view if isinstance(view, dict) else None
+    view = self._la_view
     if not isinstance(view, dict):
       return None
     try:
@@ -287,7 +307,7 @@ class TroubleSpots:
       return True
 
     # Nothing straight ahead: let the local Look Ahead path carry the heads-up round a curve or a turn.
-    view = self._path_view(wall)
+    view = self._path_view(now, wall)
     if view is None or self.gates is None:
       return False
     try:
