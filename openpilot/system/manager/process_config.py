@@ -185,6 +185,9 @@ procs += [
   PythonProcess("mapd_manager", "openpilot.sunnypilot.mapd.mapd_manager", always_run),
 
   PythonProcess("gps_fuser", "openpilot.sunnypilot.selfdrive.locationd.gps_fuser", only_onroad),
+
+  # Canopy: path, lanes, lead and events for the car screen and Zia, tailnet only
+  PythonProcess("canopy_hudd", "openpilot.sunnypilot.canopy.hudd", only_onroad),
 ]
 
 if os.path.exists("../../sunnypilot/sunnylink/uploader.py"):
