@@ -45,6 +45,13 @@ CRUISE_BUTTONS_PLUS = (ButtonType.accelCruise, ButtonType.resumeCruise)
 CRUISE_BUTTONS_MINUS = (ButtonType.decelCruise, ButtonType.setCruise)
 CRUISE_BUTTON_CONFIRM_HOLD = 0.5  # secs.
 
+# Canopy (Leaf): a set speed change of Mark's own, while the sync follows a limit, becomes his offset
+# for that limit for the rest of the drive, and the sync stays on. Stock dropped to inactive until the
+# next limit change, so one SET+ on a long 65 stretch turned the sync off for the rest of it (Nov 25:
+# active only 63 of 242 s on the 101, 46 of 213 on the 202, 2 of 212 on the 60).
+# Steps ICBM makes toward the plan's own target (a lower limit, a curve) are not his and keep it on.
+LIVE_OFFSET_MAX = 10  # mph or km/h over or under the posted limit; past this his tap turns the sync off
+
 
 class SpeedLimitAssist:
   _speed_limit_final_last: float
@@ -95,6 +102,13 @@ class SpeedLimitAssist:
     self._minus_hold = 0.
     self._release_toggle_prev = 0
 
+    # Canopy live offsets, see LIVE_OFFSET_MAX
+    self.live_adj_conv: dict[int, int] = {}  # sync target before his change (mph or km/h) -> his extra
+    self.live_adj_conv_now = 0
+    self.plan_target_prev = V_CRUISE_UNSET  # the planner's combined target last frame, in m/s
+    self.driver_set_change = False
+    self.base_target_conv = 0
+
     # TODO-SP: SLA's own output_a_target for planner
     # Solution functions mapped to respective states
     self.acceleration_solutions = {
@@ -128,12 +142,44 @@ class SpeedLimitAssist:
     else:
       events_sp.add(EventNameSP.speedLimitActive)
 
+  def note_plan_target(self, v_target: float) -> None:
+    """Canopy: the planner's combined target (min of cruise, curves, this) after each frame."""
+    self.plan_target_prev = v_target
+
+  @property
+  def _live_adj_ms(self) -> float:
+    return self.live_adj_conv_now * (CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS)
+
+  def _is_driver_set_change(self) -> bool:
+    """A cluster change that ICBM can't have made: ICBM only steps toward last frame's plan target."""
+    delta = self.v_cruise_cluster_conv - self.prev_v_cruise_cluster_conv
+    if delta == 0 or self.prev_v_cruise_cluster_conv <= 0:
+      return False
+    if self.plan_target_prev >= V_CRUISE_UNSET:
+      return True
+    speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
+    gap = round(self.plan_target_prev * speed_conv) - self.prev_v_cruise_cluster_conv
+    return gap == 0 or (gap > 0) != (delta > 0)
+
+  def _take_live_offset(self) -> bool:
+    """His change becomes the offset for this limit. False if it's past what the sync may follow."""
+    speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
+    posted = round(self._speed_limit * speed_conv)
+    over = self.v_cruise_cluster_conv - posted
+    if not self._has_speed_limit or posted <= 0 or abs(over) > LIVE_OFFSET_MAX:
+      return False
+    self.live_adj_conv[self.base_target_conv] = self.v_cruise_cluster_conv - self.base_target_conv
+    self.live_adj_conv_now = self.live_adj_conv[self.base_target_conv]
+    self.speed_limit_final_last_conv = self.v_cruise_cluster_conv
+    self.target_set_speed_conv = self.v_cruise_cluster_conv
+    return True
+
   def get_v_target_from_control(self) -> float:
     if self._has_speed_limit:
       if self.pcm_op_long and self.is_enabled:
         return self._speed_limit_final_last
       if not self.pcm_op_long and self.is_active:
-        return self._speed_limit_final_last
+        return self._speed_limit_final_last + self._live_adj_ms
 
     # Fallback
     return V_CRUISE_UNSET
@@ -179,11 +225,15 @@ class SpeedLimitAssist:
     speed_conv = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
     self.v_cruise_cluster = v_cruise_cluster
 
-    # Update current velocity offset (error)
-    self.v_offset = self._speed_limit_final_last - self.v_ego
-
-    self.speed_limit_final_last_conv = round(self._speed_limit_final_last * speed_conv)
     self.v_cruise_cluster_conv = round(self.v_cruise_cluster * speed_conv)
+
+    # Canopy: Mark's own offset for this limit this drive, if he set one
+    self.base_target_conv = round(self._speed_limit_final_last * speed_conv)
+    self.live_adj_conv_now = self.live_adj_conv.get(self.base_target_conv, 0) if self.auto_confirm else 0
+    self.speed_limit_final_last_conv = self.base_target_conv + self.live_adj_conv_now
+
+    # Update current velocity offset (error)
+    self.v_offset = self._speed_limit_final_last + self._live_adj_ms - self.v_ego
 
     cst_low, cst_high = PCM_LONG_REQUIRED_MAX_SET_SPEED[self.is_metric]
     pcm_long_required_max = cst_low if self._has_speed_limit and self.speed_limit_final_last_conv < CONFIRM_SPEED_THRESHOLD[self.is_metric] else \
@@ -321,7 +371,12 @@ class SpeedLimitAssist:
       else:
         # ACTIVE
         if self.state == SpeedLimitAssistState.active:
-          if self.v_cruise_cluster_changed:
+          if self.v_cruise_cluster_changed and self.auto_confirm:
+            # Canopy: ICBM's own steps keep the sync on; his change becomes the offset, or turns it off
+            if self.driver_set_change and not self._take_live_offset():
+              self.state = SpeedLimitAssistState.inactive
+
+          elif self.v_cruise_cluster_changed:
             self.state = SpeedLimitAssistState.inactive
 
           elif self.speed_limit_changed and self.apply_confirm_speed_threshold:
@@ -397,6 +452,7 @@ class SpeedLimitAssist:
 
     self.update_params()
     self.update_calculations(v_cruise_cluster)
+    self.driver_set_change = self.auto_confirm and self._is_driver_set_change()
 
     self._state_prev = self.state
     if self.pcm_op_long:
