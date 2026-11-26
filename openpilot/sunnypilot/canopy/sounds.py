@@ -29,6 +29,11 @@ SLOTS = {
   "lane_drop": ("canopyLaneDrop", "warning.wav"),
   "coast": ("canopyCoast", "prompt_single_low.wav"),
   "garage": ("canopyGarage", None),  # garage parking stays quiet unless a sound is made for it
+  # Spoken lane cues: a chime, then Zia saying which way (made on Forge as one file). The stock
+  # fallback is only a chime, so these are worth little until the spoken file is on the comma.
+  "merge_left": ("canopyMergeLeft", "prompt_single_high.wav"),
+  "merge_right": ("canopyMergeRight", "prompt_single_high.wav"),
+  "hand_back": ("canopyHandBack", "warning.wav"),
 }
 
 

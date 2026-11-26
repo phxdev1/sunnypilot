@@ -121,6 +121,9 @@ struct SelfdriveStateSP @0x81c2f05a394cf4af {
     canopyLaneDrop @37;
     canopyCoast @38;
     canopyGarage @39;
+    canopyMergeLeft @40;
+    canopyMergeRight @41;
+    canopyHandBack @42;
   }
 }
 
