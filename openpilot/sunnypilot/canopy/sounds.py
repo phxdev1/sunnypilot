@@ -28,7 +28,10 @@ SLOTS = {
   "move_over": ("canopyMoveOver", "warning.wav"),
   "lane_drop": ("canopyLaneDrop", "warning.wav"),
   "coast": ("canopyCoast", "prompt_single_low.wav"),
-  "garage": ("canopyGarage", None),  # garage parking stays quiet unless a sound is made for it
+  # Garage mode start and end: a chime, then Zia "Garage mode." / "Garage mode off." Stock fallback is
+  # a soft single chime so the start and end are never silent.
+  "garage": ("canopyGarage", "prompt_single_high.wav"),
+  "garage_end": ("canopyGarageEnd", "prompt_single_low.wav"),
   # Spoken lane cues: a chime, then Zia saying which way (made on Forge as one file). The stock
   # fallback is only a chime, so these are worth little until the spoken file is on the comma.
   "merge_left": ("canopyMergeLeft", "prompt_single_high.wav"),

@@ -8,7 +8,7 @@ The state lives in a small JSON file on tmpfs, so it costs nothing to write, is 
 reboot, and needs no new param or cereal service:
 
   /dev/shm/canopy/banner.json
-  {"entries": {"<source>": {"text": "...", "style": "info"|"heads_up", "until": <unix s>, "t": <unix s>}}}
+  {"entries": {"<source>": {"text": "...", "style": "info"|"heads_up"|"garage"|"lot", "until": <unix s>, "t": <unix s>}}}
 
 The UI shows the newest entry that has not expired. hudd also streams changes on /events as
 {"type": "banner", ...} so the car app can follow the same state later.
@@ -21,7 +21,7 @@ import time
 BANNER_DIR = os.environ.get("CANOPY_BANNER_DIR", "/dev/shm/canopy")
 BANNER_PATH = os.path.join(BANNER_DIR, "banner.json")
 
-STYLES = ("info", "heads_up")
+STYLES = ("info", "heads_up", "garage", "lot")  # garage: amber dashed ring; lot: purple dotted ring
 MAX_TEXT = 48
 MAX_TIMEOUT_S = 600.0
 SOURCE_RE = re.compile(r"^[a-z0-9_]{1,24}$")

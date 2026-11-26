@@ -1,7 +1,8 @@
 """Canopy status banner on the comma screen (state written by sunnypilot/canopy/banner.py).
 
 A small Lantern-style pill at the bottom of the camera view: dark panel, a cyan ring for
-info or an amber ring for a heads-up, one line of Wick text. It never covers a real openpilot
+info, an amber ring for a heads-up, an amber dashed ring for garage mode or a purple dotted ring
+for lot mode, one line of Wick text. It never covers a real openpilot
 alert: while one is showing (or animating out) the banner fades away. It never makes a sound.
 The state file is checked twice a second, read only when it changed.
 """
@@ -31,7 +32,10 @@ TEXT = rl.Color(240, 242, 245, 255)
 RING = {
   "info": rl.Color(108, 211, 240, 255),     # Lantern cyan
   "heads_up": rl.Color(255, 176, 46, 255),  # amber
+  "garage": rl.Color(255, 176, 46, 255),    # amber, dashed ring (garage mode)
+  "lot": rl.Color(176, 120, 255, 255),      # purple, dotted ring (lot mode)
 }
+RING_DASH = {"garage": (8, 0.6), "lot": (14, 0.35)}  # (pieces, share of each piece drawn)
 
 
 class CanopyBanner(Widget):
@@ -96,8 +100,16 @@ class CanopyBanner(Widget):
     rl.draw_rectangle_rounded(box, 1.0, 16, fade(PANEL))
     rl.draw_rectangle_rounded_lines_ex(box, 1.0, 16, 2, fade(PANEL_EDGE))
     cx, cy = x + PAD_X + DOT_R, y + HEIGHT / 2
-    rl.draw_circle_lines(int(cx), int(cy), DOT_R, fade(ring))
-    rl.draw_circle_lines(int(cx), int(cy), DOT_R - 1, fade(ring))
+    dash = RING_DASH.get(self._shown["style"])
+    if dash:  # parking modes: a broken ring that matches their broken path
+      pieces, share = dash
+      step = 360.0 / pieces
+      for i in range(pieces):
+        a0 = i * step
+        rl.draw_ring(rl.Vector2(cx, cy), DOT_R - 2, DOT_R + 0.5, a0, a0 + step * share, 6, fade(ring))
+    else:
+      rl.draw_circle_lines(int(cx), int(cy), DOT_R, fade(ring))
+      rl.draw_circle_lines(int(cx), int(cy), DOT_R - 1, fade(ring))
     rl.draw_circle(int(cx), int(cy), DOT_R - 4, fade(rl.Color(ring.r, ring.g, ring.b, 90)))
     tx = cx + DOT_R + DOT_GAP
     rl.draw_text_ex(self._font, text, rl.Vector2(tx, cy - size / 2), size, 0, fade(TEXT))

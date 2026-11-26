@@ -107,11 +107,14 @@ class LongitudinalPlannerSP:
     except Exception:
       cloudlog.exception("canopy red light warning failed")
 
-    # Canopy: pulling into the garage at home: a quiet banner on the comma screen, shadow only
+    # Canopy: pulling into the garage at home: amber banner and path on the comma screen, a cue as it
+    # starts and ends (Reverse ends it at once). Shadow only: nothing steers.
     try:
       if self.garage.update(sm[self.resolver._gps_location_service], CS, CS.vEgo) and self.garage.last_event:
         kind, info = self.garage.last_event
         cloudlog.event(f"canopy_garage_{kind}", **info)
+        self.events_sp.add(custom.OnroadEventSP.EventName.canopyGarageStart if kind == "start"
+                           else custom.OnroadEventSP.EventName.canopyGarageEnd)
     except Exception:
       cloudlog.exception("canopy garage banner failed")
 

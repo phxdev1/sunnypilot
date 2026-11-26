@@ -302,6 +302,22 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.HIGH, VisualAlert.none, AudibleAlertSP.canopyRightBlindspot, 2.5),
   },
 
+  EventNameSP.canopyGarageStart: {
+    ET.PERMANENT: Alert(
+      "",
+      "",
+      AlertStatus.normal, AlertSize.none,
+      Priority.MID, VisualAlert.none, AudibleAlertSP.canopyGarage, 2.),
+  },
+
+  EventNameSP.canopyGarageEnd: {
+    ET.PERMANENT: Alert(
+      "",
+      "",
+      AlertStatus.normal, AlertSize.none,
+      Priority.MID, VisualAlert.none, AudibleAlertSP.canopyGarageEnd, 2.),
+  },
+
   EventNameSP.canopyMergeRight: {
     ET.PERMANENT: Alert(
       "",

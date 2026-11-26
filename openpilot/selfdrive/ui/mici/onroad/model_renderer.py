@@ -10,6 +10,7 @@ from openpilot.selfdrive.controls.radard import RADAR_TO_CAMERA
 from openpilot.selfdrive.locationd.calibrationd import HEIGHT_INIT
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.selfdrive.ui.mici.onroad import blend_colors
+from openpilot.selfdrive.ui.mici.onroad.canopy_mode import CanopyMode, draw_mode_path
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.shader_polygon import draw_polygon, Gradient
 from openpilot.system.ui.widgets import Widget
@@ -63,6 +64,7 @@ class ModelRenderer(Widget, ModelRendererSP):
 
     # Initialize ModelPoints objects
     self._path = ModelPoints()
+    self._canopy_mode = CanopyMode()
     self._lane_lines = [ModelPoints() for _ in range(4)]
     self._road_edges = [ModelPoints() for _ in range(2)]
     self._acceleration_x = np.empty((0,), dtype=np.float32)
@@ -326,6 +328,12 @@ class ModelRenderer(Widget, ModelRendererSP):
       return
 
     path_pts = self._path.projected_points + np.array([self._rect.x, self._rect.y], dtype=np.float32)
+
+    # Canopy: a parking mode draws its own path (garage amber dashes, lot purple dots)
+    mode = self._canopy_mode.current()
+    if mode is not None:
+      draw_mode_path(self._rect, path_pts, mode)
+      return
 
     if ui_state.status == UIStatus.DISENGAGED:
       draw_polygon(self._rect, path_pts, rl.Color(0, 0, 0, 90))

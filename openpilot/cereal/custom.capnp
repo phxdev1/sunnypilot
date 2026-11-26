@@ -126,6 +126,7 @@ struct SelfdriveStateSP @0x81c2f05a394cf4af {
     canopyHandBack @42;
     canopyBlinkerOff @43;
     canopyRightBlindspot @44;
+    canopyGarageEnd @45;
   }
 }
 
@@ -384,6 +385,8 @@ struct OnroadEventSP @0xda96579883444c35 {
     canopyMergeLeft @33;
     canopyMergeRight @34;
     canopyRightBlindspot @35;
+    canopyGarageStart @36;
+    canopyGarageEnd @37;
   }
 }
 

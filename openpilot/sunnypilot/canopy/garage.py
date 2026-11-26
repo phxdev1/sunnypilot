@@ -1,7 +1,8 @@
 """Canopy garage parking: know when he is pulling into the garage at home, show it, log it.
 
-Shadow only. Nothing here steers, brakes or presses a button. It puts "Garage parking in
-progress" on the comma screen (canopy/banner.py) so he can see when Canopy thinks it is
+Shadow only. Nothing here steers, brakes or presses a button. It puts "Garage mode" on the comma
+screen in amber (canopy/banner.py; the path turns to amber dashes, mici/onroad/canopy_mode.py) and
+the planner plays a cue as it starts and ends, so he can see and hear when Canopy thinks it is
 parking, and logs each attempt for the parking planner shadow (Drex plan vs what he did).
 
 Starts when all hold for START_HOLD_S:
@@ -24,7 +25,7 @@ from openpilot.sunnypilot.canopy import banner
 
 GARAGE_PATH = "/data/canopy/garage.json"
 SOURCE = "garage"
-TEXT = "Garage parking in progress"
+TEXT = "Garage mode"
 MS_TO_MPH = 2.23694
 
 ZONE_M = 40.0
@@ -143,7 +144,7 @@ class GaragePark:
         return False
       self.active, self.started_at, self.min_dist = True, now, d
       self._rev_since = None
-      self._post(SOURCE, TEXT, "info", BANNER_TIMEOUT_S)
+      self._post(SOURCE, TEXT, "garage", BANNER_TIMEOUT_S)
       self._last_post = now
       self.last_event = ("start", {"dist_m": round(d, 1), "mph": round(mph, 1), "wall": round(wall, 1)})
       self._live(now, wall, force=True, active=True, dist_m=round(d, 1), mph=round(mph, 1), gear=gear, secs=0.0,
@@ -168,6 +169,6 @@ class GaragePark:
     else:
       self._rev_since = None
     if now - self._last_post >= REFRESH_S:
-      self._post(SOURCE, TEXT, "info", BANNER_TIMEOUT_S)
+      self._post(SOURCE, TEXT, "garage", BANNER_TIMEOUT_S)
       self._last_post = now
     return False
