@@ -16,6 +16,7 @@ from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD, get_sanitize_int_param
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MAP_DATA_AGE, LIMIT_ADAPT_ACC
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Policy, OffsetType
 from openpilot.sunnypilot.canopy.speed_offsets import LearnedSpeedOffsets
+from openpilot.sunnypilot.canopy.merge_up import MergeUp, plan_max_curvature
 
 SpeedLimitSource = custom.LongitudinalPlanSP.SpeedLimit.Source
 
@@ -71,6 +72,7 @@ class SpeedLimitResolver:
     # Canopy: per-limit offsets learned from Mark's drives (Forge writes the file after each drive)
     self.learned_offsets = LearnedSpeedOffsets()
     self.learned_offsets.refresh()
+    self.merge_up = MergeUp()
 
     self.speed_limit = 0.
     self.speed_limit_last = 0.
@@ -159,6 +161,17 @@ class SpeedLimitResolver:
       if distance_to_speed_limit_ahead <= adapt_distance:
         self.limit_solutions[SpeedLimitSource.map] = next_speed_limit
         self.distance_solutions[SpeedLimitSource.map] = distance_to_speed_limit_ahead
+
+    # Canopy merge up: on an on-ramp, go for the freeway's limit now instead of after the merge.
+    # Uses mapd's own distance: the correction above mixes monotonic and GPS wall time (the FIXME),
+    # which pushes the corrected distance far out of range.
+    try:
+      model = sm['modelV2']
+    except KeyError:  # the mapd debug tool runs the resolver without the model
+      model = None
+    if self.merge_up.update(speed_limit, next_speed_limit, map_data.speedLimitAheadDistance, plan_max_curvature(model)):
+      self.limit_solutions[SpeedLimitSource.map] = next_speed_limit
+      self.distance_solutions[SpeedLimitSource.map] = 0.
 
   def _get_source_solution_according_to_policy(self) -> custom.LongitudinalPlanSP.SpeedLimit.Source:
     sources_for_policy = self._policy_to_sources_map[Policy(self.policy)]
