@@ -2,7 +2,8 @@
 
 Once per new lead track (never per frame), and only while a head unit client is connected, grab one
 road camera frame, crop the lead car using radar distance and the camera calibration, and send the
-small JPEG to Forge's leadclass service on the tailnet. Forge asks Gemini (the OpenRouter key stays
+small JPEG to Forge's leadclass service at https://forge.mpvt.io/canopy/lead (the comma's userspace
+tailscale can't reach Forge's tailnet IP), with the token in /data/canopy/forge_token. Forge asks Gemini (the OpenRouter key stays
 on Forge) and answers body type, make, model and color, each "unknown" under the 0.8 bar.
 
 The plate is read in a second, separate call only when the lead is close enough for the plate to
@@ -22,7 +23,8 @@ import urllib.request
 
 import numpy as np
 
-FORGE = os.environ.get("CANOPY_LEADCLASS_URL", "http://100.80.204.53:18864")
+FORGE = os.environ.get("CANOPY_LEADCLASS_URL", "https://forge.mpvt.io/canopy/lead")
+TOKEN_PATH = "/data/canopy/forge_token"
 OFF_FLAG = "/data/canopy/leadkind_off"
 REALDATA = "/data/media/0/realdata"
 TIMEOUT_S = 6.0
@@ -98,9 +100,17 @@ def route_name():
     return "unknown"
 
 
+def _token() -> str:
+  try:
+    with open(TOKEN_PATH) as f:
+      return f.read().strip()
+  except OSError:
+    return ""
+
+
 def _post(path, body, headers):
   req = urllib.request.Request(FORGE + path, data=body, method="POST",
-                               headers=dict({"Content-Type": "image/jpeg"}, **headers))
+                               headers=dict({"Content-Type": "image/jpeg", "X-Canopy-Token": _token()}, **headers))
   with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
     return json.load(r)
 
