@@ -6,7 +6,8 @@ Stdlib only, nothing to install. Binds 127.0.0.1 only: the comma's Tailscale run
 userspace mode and hands tailnet connections to localhost, so the stream is reachable from
 the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
 
-  GET /hud     Server-Sent Events, about 10 frames/s while a client is connected.
+  GET /hud     Server-Sent Events while a client is connected: discrete changes at once, geometry at most
+               5 frames/s and only past 0.1 m or 0.5 mph, and at least 2 frames/s (see hud_due).
   GET /events  Server-Sent Events, only when something happens (engage, lead, stop, intent).
   GET /health  one JSON line.
   /hud frame "v": 2 adds "lead.mph" (lead car speed over the ground) and "nav_lanes": the nav lane strip
@@ -26,9 +27,10 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
                from canopy/leadkind.py: one look-up per new lead track, only while a client is connected.
                The plate is for the live screen only: it is never on /events, never logged, and dropped when
                the lead changes. Draw a generic car when kind is "unknown" or missing.
-  /events also carries {"type": "drive", ...} at about 10 Hz for the car app's drive view: path, lanes,
+  /events also carries {"type": "drive", ...} at about 10 Hz for car app 0.15.11's drive view: path, lanes,
                edges, lead and the nav strip with y positive to the RIGHT, rounded to 0.1 m (see drive_event).
-               It never carries the plate.
+               It never carries the plate. Only for clients that want it (see wants_drive): ?drive=1 or ?drive=0,
+               and python or curl clients like Zia don't get it by default.
 
 Frame coordinates are the car frame in meters: x forward, y left-positive (model y is
 flipped here so path, lanes, edges and the radar lead all agree).
@@ -314,11 +316,62 @@ def publish(qs, item):
         pass  # slow client: drop frames rather than lag behind
 
 
+def wants_drive(path: str, ua: str) -> bool:
+  """The 10 Hz "drive" event is for car app 0.15.11 only (0.15.12 reads /hud). Clients ask with
+  /events?drive=1 or turn it off with ?drive=0; with neither, scripts (python-httpx, curl: Zia on Forge)
+  don't get it, so it doesn't spend the comma's LTE on clients that never draw it."""
+  q = path.partition("?")[2]
+  if "drive=1" in q:
+    return True
+  if "drive=0" in q:
+    return False
+  return not ua.lower().startswith(("python", "curl"))
+
+
+HUD_MIN_S = 0.2    # /hud at most 5 frames/s for geometry changes (car app LTE, Nov 26)
+HUD_KEEP_S = 0.5   # and at least 2/s, under the car app's 1 s stale mark
+HUD_MOVE_M = 0.1   # path, lanes, edges or lead must move this much to count as changed
+_hud_sent = {"frame": None, "t": 0.0}
+_HUD_SKIP = {"t", "path", "lanes", "edges", "lead", "mph"}
+
+
+def _moved(a, b, tol) -> bool:
+  if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
+    return abs(a - b) > tol
+  if isinstance(a, list) and isinstance(b, list):
+    return len(a) != len(b) or any(_moved(x, y, tol) for x, y in zip(a, b))
+  if isinstance(a, dict) and isinstance(b, dict):
+    return a.keys() != b.keys() or any(_moved(a[k], b[k], tol) for k in a)
+  return a != b
+
+
+def hud_due(sent: dict, cur: dict, now: float) -> bool:
+  """Whether a /hud frame goes out. Discrete changes (engage, override, blinker, lead kind, nav strip,
+  a lead appearing or going) go out at once; geometry and speed changes at most every 0.2 s and only past
+  0.1 m or 0.5 mph; and a frame at least every 0.5 s so the screen never reads stale. About half the data
+  of a flat 10 Hz on a steady road."""
+  prev = sent["frame"]
+  if prev is None or now - sent["t"] >= HUD_KEEP_S:
+    return True
+  if any(prev.get(k) != cur.get(k) for k in cur.keys() | prev.keys() if k not in _HUD_SKIP):
+    return True
+  pl, cl = prev.get("lead"), cur.get("lead")
+  if (pl is None) != (cl is None):
+    return True
+  if pl and cl and any(pl.get(k) != cl.get(k) for k in ("kind", "make", "model", "color", "plate")):
+    return True
+  if now - sent["t"] < HUD_MIN_S:
+    return False
+  return (_moved(prev.get("mph"), cur.get("mph"), 0.5) or
+          any(_moved(prev.get(k), cur.get(k), HUD_MOVE_M) for k in ("path", "lanes", "edges", "lead")))
+
+
 def publish_lossy(qs, item, keep_free=16):
-  """10 Hz drive events: skipped for a client that is falling behind, so cues and alerts always fit."""
+  """10 Hz drive events: only to clients that want them, and skipped for a client that is falling behind,
+  so cues and alerts always fit."""
   with _lock:
     for q in list(qs):
-      if q.maxsize - q.qsize() > keep_free:
+      if getattr(q, "drive", False) and q.maxsize - q.qsize() > keep_free:
         try:
           q.put_nowait(item)
         except queue.Full:
@@ -359,8 +412,10 @@ def pump():
     if cur is None:
       continue
     _last["frame"], _last["t"] = cur, now
-    publish(_clients_hud, json.dumps(cur, separators=(",", ":")))
-    if _clients_ev:
+    if _clients_hud and hud_due(_hud_sent, cur, now):
+      _hud_sent["frame"], _hud_sent["t"] = cur, now
+      publish(_clients_hud, json.dumps(cur, separators=(",", ":")))
+    if any(getattr(q, "drive", False) for q in _clients_ev):
       try:
         lp = _r(sm["radarState"].leadOne.modelProb) if cur["lead"] else None
         publish_lossy(_clients_ev, json.dumps(drive_event(cur, lp), separators=(",", ":")))
@@ -377,8 +432,9 @@ class H(BaseHTTPRequestHandler):
   def log_message(self, *a):
     pass
 
-  def _sse(self, qs):
+  def _sse(self, qs, drive=False):
     q: queue.Queue = queue.Queue(maxsize=5 if qs is _clients_hud else 20)
+    q.drive = drive  # type: ignore[attr-defined]
     with _lock:
       qs.append(q)
     try:
@@ -440,7 +496,7 @@ class H(BaseHTTPRequestHandler):
     if path == "/hud":
       return self._sse(_clients_hud)
     if path == "/events":
-      return self._sse(_clients_ev)
+      return self._sse(_clients_ev, drive=wants_drive(self.path, self.headers.get("User-Agent") or ""))
     if path == "/health":
       body = json.dumps({"ok": True, "hud_clients": len(_clients_hud), "event_clients": len(_clients_ev),
                          "frame_age_s": _r(time.monotonic() - _last["t"], 1) if _last["frame"] else None,
