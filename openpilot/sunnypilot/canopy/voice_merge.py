@@ -73,6 +73,7 @@ def _load_confidence():
         "n_events": int(bd.get("n_events", 0)),
         "lb": float(bd.get("lb", 0.0)),
         "live": bool(bd.get("live", False)),
+        "pending_live": bool(bd.get("pending_live", False)),
       }
     return out
   except (OSError, ValueError):
@@ -80,7 +81,7 @@ def _load_confidence():
 
 
 def _zero_band():
-  return {"s": 0.0, "f": 0.0, "n_events": 0, "lb": 0.0, "live": False}
+  return {"s": 0.0, "f": 0.0, "n_events": 0, "lb": 0.0, "live": False, "pending_live": False}
 
 
 def _atomic_write_confidence(conf):
@@ -92,6 +93,21 @@ def _atomic_write_confidence(conf):
     os.replace(tmp, CONFIDENCE_FILE)
   except OSError:
     pass
+
+
+def _set_band_flag(band, live):
+  """Atomically ensure (live) or remove (not live) the flag file for a band."""
+  path = LIVE_FLAG if band == "street" else LIVE_FLAG_FREEWAY
+  if live:
+    try:
+      open(path, "a").close()
+    except OSError:
+      pass
+  else:
+    try:
+      os.remove(path)
+    except OSError:
+      pass
 
 
 class VoiceMerge:
@@ -115,6 +131,24 @@ class VoiceMerge:
     self.confidence = _load_confidence()
     self._outcome = None
 
+    # Auto-live: ensure any band with a pending flag claim is applied BEFORE
+    # the live flags are read from disk. A flip to live takes effect only here
+    # (drive start, in Park) and is never applied mid-drive.
+    for band in ("street", "freeway"):
+      bd = self.confidence.get(band, {})
+      if bd.get("pending_live"):
+        lb = bd.get("lb", 0.0)
+        _set_band_flag(band, True)
+        bd["pending_live"] = False
+        bd["live"] = True
+        _atomic_write_confidence(self.confidence)
+        self._emit_state("auto_live", None, band=band, lb=round(lb, 3))
+
+    # Read live flags ONCE at drive start. The periodic re-read is removed;
+    # LIVE_EVERY stays only because it is referenced by the frame loop below.
+    self.live = os.path.exists(LIVE_FLAG)
+    self.live_freeway = os.path.exists(LIVE_FLAG_FREEWAY)
+
   def _read_cmd(self):
     """Read and json-parse VOICE_FILE; return None on error or non-dict."""
     try:
@@ -137,6 +171,10 @@ class VoiceMerge:
       "confidence": {
         "street": round(self.confidence.get("street", {}).get("lb", 0.0), 3),
         "freeway": round(self.confidence.get("freeway", {}).get("lb", 0.0), 3),
+      },
+      "pending": {
+        "street": bool(self.confidence.get("street", {}).get("pending_live", False)),
+        "freeway": bool(self.confidence.get("freeway", {}).get("pending_live", False)),
       },
       **kw,
     }
@@ -183,7 +221,7 @@ class VoiceMerge:
       pass
 
   def _close_outcome(self, clean, reason_close=None):
-    """Close the open outcome, update confidence, log, and possibly flip live flags."""
+    """Close the open outcome, update confidence, log, and possibly queue a pending live flip."""
     if self._outcome is None:
       return
     o = self._outcome
@@ -214,43 +252,31 @@ class VoiceMerge:
 
     # Confidence-driven live flag transitions
     if not clean and live:
-      # Demote: remove live flag, reset band to zeros
+      # Demote: remove live flag, reset band to zeros, set in-memory live False
       bd["s"] = 0.0
       bd["f"] = 0.0
       bd["n_events"] = 0
       bd["lb"] = 0.0
       bd["live"] = False
+      bd["pending_live"] = False
       _atomic_write_confidence(self.confidence)
       if band == "street":
-        try:
-          os.remove(LIVE_FLAG)
-        except OSError:
-          pass
+        _set_band_flag("street", False)
+        self.live = False
       else:
-        try:
-          os.remove(LIVE_FLAG_FREEWAY)
-        except OSError:
-          pass
+        _set_band_flag("freeway", False)
+        self.live_freeway = False
       self._emit_state("demoted", side, band=band)
       return
 
     if clean and not live and o.get("was_practice"):
-      # Practice outcome that crossed the line: check auto-live
+      # Practice outcome that crossed the line: queue a pending auto-live flip.
+      # The flip is applied only in __init__ (drive start, in Park), never mid-drive.
       lb = self.confidence[band]["lb"]
       if lb >= 0.95 and not self.confidence[band]["live"]:
-        self.confidence[band]["live"] = True
+        bd["pending_live"] = True
         _atomic_write_confidence(self.confidence)
-        if band == "street":
-          try:
-            open(LIVE_FLAG, "a").close()
-          except OSError:
-            pass
-        else:
-          try:
-            open(LIVE_FLAG_FREEWAY, "a").close()
-          except OSError:
-            pass
-        self._emit_state("auto_live", side, band=band)
+        self._emit("pending_live", side, band=band, lb=round(lb, 3))
 
   def step(
     self,
@@ -279,8 +305,10 @@ class VoiceMerge:
     )
 
     if self._frame % LIVE_EVERY == 1:
-      self.live = os.path.exists(LIVE_FLAG)
-      self.live_freeway = os.path.exists(LIVE_FLAG_FREEWAY)
+      # LIVE_EVERY is retained because the frame loop references it.
+      # The periodic re-read of self.live / self.live_freeway is removed:
+      # live flags are read ONCE in __init__ (drive start, in Park).
+      pass
 
     if self._frame % READ_EVERY == 0:
       cmd = self._read_cmd()
