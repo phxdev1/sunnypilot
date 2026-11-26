@@ -33,6 +33,9 @@ LANE_CHANGE_START_TIME = 0.5
 # Blind spot can cancel a started lane change only this early, while the car is still well inside
 # its own lane. Typical openpilot lane changes take ~4-6 s and cross the line around the midpoint.
 LANE_CHANGE_BSM_ABORT_TIME = 1.5
+# Canopy: a live intent change (no nudge) waits 1 s after blinker-on, giving him a beat to cancel a
+# flick of the stalk before the car commits to the change.
+INTENT_DELAY_FRAMES = int(1.5 / DT_MDL)
 
 TURN_DESIRES = {
   TurnDirection.none: log.Desire.none,
@@ -103,6 +106,7 @@ class DesireHelper:
     except Exception:
       self.blinker_intent = None
     self._intent_go = False        # Canopy: blinker_intent said lane change, gate live: no nudge needed
+    self._intent_frames = 0        # Canopy: model frames in preLaneChange under this blinker, for the intent delay
 
   @staticmethod
   def get_lane_change_direction(CS):
@@ -175,6 +179,7 @@ class DesireHelper:
         # Initialize lane change direction to prevent UI alert flicker
         self.lane_change_direction = self.get_lane_change_direction(carstate)
         self._intent_go = False
+        self._intent_frames = 0
         if self.blinker_intent is not None and nudge_band:
           try:
             side = "left" if carstate.leftBlinker else "right"
@@ -207,7 +212,13 @@ class DesireHelper:
 
         nudge_ok = torque_applied and abs(carstate.steeringAngleDeg) < NUDGE_MAX_ANGLE_DEG and \
                    self._since_brake >= NUDGE_NO_BRAKE_FRAMES and carstate.aEgo > NUDGE_MIN_ACCEL
-        intent_ok = self._intent_go and self._since_brake >= NUDGE_NO_BRAKE_FRAMES and carstate.aEgo > NUDGE_MIN_ACCEL
+        # Canopy: an intent change has no nudge behind it, so the blind spot on the change side blocks it
+        # the way it blocks a voice change (the advisory rule is for his own signalled, nudged changes).
+        self._intent_frames += 1
+        intent_bs = carstate.leftBlindspot if self.lane_change_direction == LaneChangeDirection.left else carstate.rightBlindspot
+        intent_ok = self._intent_go and not intent_bs and \
+                    self._intent_frames >= INTENT_DELAY_FRAMES and \
+                    self._since_brake >= NUDGE_NO_BRAKE_FRAMES and carstate.aEgo > NUDGE_MIN_ACCEL
         if not one_blinker or below_lane_change_speed:
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
@@ -238,7 +249,8 @@ class DesireHelper:
           opposite_blinker = opposite_blinker and not (self._prev_held[1] if going_left else self._prev_held[0])  # only a new one cancels
         torque_against = carstate.steeringPressed and \
                          ((carstate.steeringTorque < 0) if going_left else (carstate.steeringTorque > 0))
-        blindspot_ahead = (carstate.leftBlindspot if going_left else (carstate.rightBlindspot and (self.voice_change or not RIGHT_BS_ADVISORY))) and \
+        blindspot_ahead = (carstate.leftBlindspot if going_left
+                           else (carstate.rightBlindspot and (self.voice_change or self._intent_go or not RIGHT_BS_ADVISORY))) and \
                           self.lane_change_timer < LANE_CHANGE_BSM_ABORT_TIME
         if not going_left and carstate.rightBlindspot:
           self._right_bs_seen = True
