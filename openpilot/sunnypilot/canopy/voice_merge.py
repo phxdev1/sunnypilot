@@ -14,6 +14,7 @@ import time
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 from openpilot.common.swaglog import cloudlog
+from openpilot.sunnypilot.canopy import params_file
 
 VOICE_FILE = os.environ.get("CANOPY_VOICE_FILE", "/dev/shm/canopy/voice_merge.json")
 STATE_FILE = os.environ.get("CANOPY_VOICE_STATE", "/dev/shm/canopy/voice_merge_state.json")
@@ -130,6 +131,9 @@ class VoiceMerge:
     self._prev_left_prob = None
     self.confidence = _load_confidence()
     self._outcome = None
+    p = params_file.load()
+    self.signal_window_s = p["voice_merge_delay_s"]
+    self.outcome_window_s = p["voice_merge_window_s"]
 
     # Auto-live: ensure any band with a pending flag claim is applied BEFORE
     # the live flags are read from disk. A flip to live takes effect only here
@@ -363,7 +367,7 @@ class VoiceMerge:
       self._close_outcome(clean=False)
 
     # --- No lane change within the outcome window is NOT clean ---
-    if self._outcome is not None and now - self._outcome["opened_at"] >= OUTCOME_WINDOW_S:
+    if self._outcome is not None and now - self._outcome["opened_at"] >= self.outcome_window_s:
       self._close_outcome(clean=False)
 
     if self.pending is None:
@@ -450,7 +454,7 @@ class VoiceMerge:
 
     p["opp_was"] = bool(opp_blinker)
 
-    if age < SIGNAL_WINDOW_S:
+    if age < self.signal_window_s:
       return None
 
     if age >= EXPIRE_S:

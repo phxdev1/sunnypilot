@@ -8,6 +8,7 @@ from openpilot.cereal import custom
 
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
+from openpilot.sunnypilot.canopy import params_file
 
 TurnDirection = custom.ModelDataV2SP.TurnDirection
 
@@ -19,14 +20,17 @@ class LaneTurnController:
     self.DH = desire_helper
     self.turn_direction = TurnDirection.none
     self.params = Params()
-    self.lane_turn_value = float(self.params.get("LaneTurnValue", return_default=True)) * CV.MPH_TO_MS
+    self._override = params_file.load().get("lane_turn_max_mph")
+    lt = float(self.params.get("LaneTurnValue", return_default=True))
+    self.lane_turn_value = (self._override if self._override is not None else lt) * CV.MPH_TO_MS
     self.param_read_counter = 0
     self.enabled = self.params.get_bool("LaneTurnDesire")
 
   def read_params(self):
     self.enabled = self.params.get_bool("LaneTurnDesire")
-    value = float(self.params.get("LaneTurnValue", return_default=True)) * CV.MPH_TO_MS
-    self.lane_turn_value = min(float(LANE_CHANGE_SPEED_MIN), value)
+    lt = float(self.params.get("LaneTurnValue", return_default=True))
+    v = self._override if self._override is not None else lt
+    self.lane_turn_value = min(float(LANE_CHANGE_SPEED_MIN), v * CV.MPH_TO_MS)
 
   def update_params(self) -> None:
     if self.param_read_counter % 50 == 0:

@@ -60,6 +60,7 @@ from openpilot.common.params import Params
 from openpilot.sunnypilot.canopy import banner
 from openpilot.sunnypilot.canopy import leadkind
 from openpilot.sunnypilot.canopy import sounds as canopy_sounds
+from openpilot.sunnypilot.canopy import params_file
 
 PORT = int(os.environ.get("CANOPY_HUD_PORT", "8870"))
 OFF_FLAG = "/data/canopy/hud_off"
@@ -74,6 +75,26 @@ CUE_SLOTS = {getattr(_ASP, field): slot for slot, (field, _) in canopy_sounds.SL
 _params = Params()
 _GPS = get_gps_location_service(_params)
 _lk = {"obj": None}
+
+_params_cache = {"mtime": None, "data": None}
+
+
+def params_snapshot():
+  """The in-use params snapshot, read on each /events request and cached by mtime; {} if missing."""
+  try:
+    m = os.path.getmtime(params_file.IN_USE_PATH)
+  except OSError:
+    return {}
+  if m == _params_cache["mtime"]:
+    return _params_cache["data"]
+  _params_cache["mtime"] = m
+  try:
+    with open(params_file.IN_USE_PATH) as f:
+      d = json.load(f)
+    _params_cache["data"] = d if isinstance(d, dict) else {}
+  except (OSError, ValueError):
+    _params_cache["data"] = {}
+  return _params_cache["data"]
 
 
 def lead_kind():
@@ -126,7 +147,7 @@ def garage_event():
   st = garage_state()
   if st is None:
     return None
-  return json.dumps(dict(st, type="garage"), separators=(",", ":"))
+  return json.dumps(dict(st, type="garage", params=params_snapshot()), separators=(",", ":"))
 
 
 def voice_event():
@@ -145,7 +166,7 @@ def voice_event():
     return None
   if not isinstance(st, dict):
     return None
-  return json.dumps(dict(st, type="voice_merge"), separators=(",", ":"))
+  return json.dumps(dict(st, type="voice_merge", params=params_snapshot()), separators=(",", ":"))
 
 
 def voice_verdict(frame, age_s) -> str:
@@ -173,7 +194,7 @@ def banner_event():
     return None
   _banner["last"] = key
   b = None if cur is None else {k: cur[k] for k in ("source", "text", "style", "until")}
-  return json.dumps({"type": "banner", "banner": b, "t": _r(time.time(), 2)}, separators=(",", ":"))
+  return json.dumps({"type": "banner", "banner": b, "t": _r(time.time(), 2), "params": params_snapshot()}, separators=(",", ":"))
 
 
 NAV_LANES = os.path.join(banner.BANNER_DIR, "nav_lanes.json")
@@ -309,6 +330,7 @@ def drive_event(cur, lead_p) -> dict:
       "cls_p": lead["kind_conf"] if lead["kind"] not in (None, "unknown") else 0.0,
       "make": lead["make"], "model": lead["model"], "color": lead["color"]},
     "strip": strip,
+    "params": params_snapshot(),
   }
 
 
@@ -347,6 +369,7 @@ def events_from(prev, cur) -> list[dict]:
                "text": cur["alert"], "lead_m": (cur["lead"] or {}).get("m")})
   for e in ev:
     e["t"] = cur["t"]
+    e["params"] = params_snapshot()
   return ev
 
 
@@ -452,7 +475,7 @@ def pump():
       cur = build_frame(sm)
     except Exception as e:  # never take anything down over a display stream
       cur = None
-      publish(_clients_ev, json.dumps({"type": "hud_error", "msg": str(e)[:200]}))
+      publish(_clients_ev, json.dumps({"type": "hud_error", "msg": str(e)[:200], "params": params_snapshot()}))
     if cur is None:
       continue
     _last["frame"], _last["t"] = cur, now

@@ -5,6 +5,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.selfdrive.controls.lib.auto_lane_change import AutoLaneChangeController, AutoLaneChangeMode
 from openpilot.sunnypilot.selfdrive.controls.lib.lane_turn_desire import LaneTurnController
 from openpilot.sunnypilot.canopy.voice_merge import VoiceMerge
+from openpilot.sunnypilot.canopy import params_file
 
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
@@ -75,6 +76,9 @@ class _HeldBlinkers:
 
 class DesireHelper:
   def __init__(self):
+    p = params_file.load()
+    self.lane_change_speed_min = p["lane_change_speed_min_mph"] * CV.MPH_TO_MS
+    self.lane_change_auto_min = p["lane_change_auto_min_mph"] * CV.MPH_TO_MS
     self.lane_change_state = LaneChangeState.off
     self.lane_change_direction = LaneChangeDirection.none
     self.lane_change_timer = 0.0
@@ -125,8 +129,8 @@ class DesireHelper:
     self.lane_turn_controller.update_params()
     v_ego = carstate.vEgo
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
-    below_lane_change_speed = v_ego < LANE_CHANGE_SPEED_MIN
-    nudge_band = v_ego < LANE_CHANGE_AUTO_MIN
+    below_lane_change_speed = v_ego < self.lane_change_speed_min
+    nudge_band = v_ego < self.lane_change_auto_min
     self._since_brake = 0 if carstate.brakePressed else min(self._since_brake + 1, NUDGE_NO_BRAKE_FRAMES)
     voice_side = self.voice.step(carstate, lateral_active, self.lane_change_state != LaneChangeState.laneChangeStarting,
                                  left_edge_detected, right_edge_detected, False,
