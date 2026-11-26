@@ -20,6 +20,19 @@ from openpilot.sunnypilot.canopy.merge_up import MergeUp, plan_max_curvature
 
 SpeedLimitSource = custom.LongitudinalPlanSP.SpeedLimit.Source
 
+CRUISE_LAG_S = 3.  # s, button press to ProPILOT actually slowing
+
+
+def _msg_age(sm, service: str) -> float:
+  """Seconds since a service last arrived, on the monotonic clock. 0 when the SubMaster can't say."""
+  try:
+    mono = sm.logMonoTime[service]
+  except (AttributeError, KeyError):
+    return 0.
+  if not mono:
+    return float("inf")
+  return max(0., time.monotonic() - mono * 1e-9)
+
 ALL_SOURCES = tuple(SpeedLimitSource.schema.enumerants.values())
 
 
@@ -131,10 +144,11 @@ class SpeedLimitResolver:
     self._process_map_data(sm)
 
   def _process_map_data(self, sm: messaging.SubMaster) -> None:
-    gps_data = sm[self._gps_location_service]
     map_data = sm['liveMapDataSP']
 
-    gps_fix_age = time.monotonic() - gps_data.unixTimestampMillis * 1e-3
+    # Canopy: age the fix on the monotonic clock. The stock check subtracted GPS wall time from
+    # monotonic time, which is always negative, so stale map data was never dropped.
+    gps_fix_age = _msg_age(sm, self._gps_location_service)
     if gps_fix_age > LIMIT_MAX_MAP_DATA_AGE:
       return
 
@@ -144,27 +158,28 @@ class SpeedLimitResolver:
     self._calculate_map_data_limits(sm, speed_limit, next_speed_limit)
 
   def _calculate_map_data_limits(self, sm: messaging.SubMaster, speed_limit: float, next_speed_limit: float) -> None:
-    gps_data = sm[self._gps_location_service]
     map_data = sm['liveMapDataSP']
 
-    distance_since_fix = self.v_ego * (time.monotonic() - gps_data.unixTimestampMillis * 1e-3)
+    # Canopy slow before the sign: how far we have rolled since mapd published its distance,
+    # both ends on the monotonic clock. The stock version mixed monotonic with GPS wall time,
+    # so the distance came out huge and the early slowdown never fired.
+    distance_since_fix = self.v_ego * min(_msg_age(sm, 'liveMapDataSP'), LIMIT_MAX_MAP_DATA_AGE)
     distance_to_speed_limit_ahead = max(0., map_data.speedLimitAheadDistance - distance_since_fix)
 
     self.limit_solutions[SpeedLimitSource.map] = speed_limit
     self.distance_solutions[SpeedLimitSource.map] = 0.
 
-    # FIXME-SP: this is not working as expected
     if 0. < next_speed_limit < self.v_ego:
       adapt_time = (next_speed_limit - self.v_ego) / LIMIT_ADAPT_ACC
-      adapt_distance = self.v_ego * adapt_time + 0.5 * LIMIT_ADAPT_ACC * adapt_time ** 2
+      # ProPILOT follows the cruise buttons a few seconds late, so start that much earlier.
+      adapt_distance = self.v_ego * (adapt_time + CRUISE_LAG_S) + 0.5 * LIMIT_ADAPT_ACC * adapt_time ** 2
 
       if distance_to_speed_limit_ahead <= adapt_distance:
         self.limit_solutions[SpeedLimitSource.map] = next_speed_limit
         self.distance_solutions[SpeedLimitSource.map] = distance_to_speed_limit_ahead
 
     # Canopy merge up: on an on-ramp, go for the freeway's limit now instead of after the merge.
-    # Uses mapd's own distance: the correction above mixes monotonic and GPS wall time (the FIXME),
-    # which pushes the corrected distance far out of range.
+    # Uses mapd's raw distance: merge up only wants to know the ramp is near.
     try:
       model = sm['modelV2']
     except KeyError:  # the mapd debug tool runs the resolver without the model
