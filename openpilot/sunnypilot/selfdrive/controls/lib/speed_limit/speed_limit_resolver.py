@@ -262,16 +262,17 @@ class SpeedLimitResolver:
       if w is None:
         return
       limit_mph = self.speed_limit * CV.MS_TO_MPH
-      target = green_wave.target_at(w, time.time())
-      if target is None or target <= limit_mph:
+      # where the set speed already is: the limit plus whatever the learned table asked for
+      current_mph = (self.speed_limit + self.speed_limit_offset) * CV.MS_TO_MPH
+      over = green_wave.offset_gain(limit_mph, current_mph, w, time.time())
+      if over <= 0.:
         return
-      over = min(target - limit_mph, green_wave.CAP_MPH)
       if not self.learned_offsets.allow_above:
         if self.frame % 100 == 0:  # shadow: once every 5 s of chasing a wave
           cloudlog.event("canopy_green_wave_shadow", over_mph=round(over, 1), catch=w.get("catch"),
                          of=w.get("of"), limit_mph=round(limit_mph, 1))
         return
-      self.wave_mph = round(over, 1)
+      self.wave_mph = over
       self.speed_limit_offset += over * CV.MPH_TO_MS
       if self.frame % 100 == 0:
         cloudlog.event("canopy_green_wave", over_mph=self.wave_mph, catch=w.get("catch"), of=w.get("of"))

@@ -92,3 +92,16 @@ def test_signals_come_out_of_the_look_ahead_view_with_their_timing():
     got = gw.signals_from_view(view, 40.0, 0.0)
     assert [s["d"] for s in got] == [300.0, 900.0]
     assert got[0]["timing"]["cycle_s"] == 40
+
+
+def test_the_wave_tops_up_and_never_stacks_on_the_learned_offset():
+    w = {"on": True, "base_mph": 36.0, "amp_mph": 0.0, "period_s": 24.0, "phase_s": 0.0}
+    # a 35 limit already carrying the learned +5 sits at 40: the wave wants 36, so it adds nothing
+    assert gw.offset_gain(35.0, 40.0, w, 0.0) == 0.0
+    # no learned offset: the wave tops up from the limit
+    assert gw.offset_gain(35.0, 35.0, w, 0.0) == 1.0
+    # a 30 limit at 30 with a wave that got greedy still stops at the cap
+    greedy = {"on": True, "base_mph": 30.0 + gw.CAP_MPH + 4, "amp_mph": 0.0, "period_s": 24.0, "phase_s": 0.0}
+    assert gw.offset_gain(30.0, 30.0, greedy, 0.0) == gw.CAP_MPH
+    assert gw.offset_gain(30.0, 0.0, None, 0.0) == 0.0
+    assert gw.offset_gain(0.0, 0.0, w, 0.0) == 0.0

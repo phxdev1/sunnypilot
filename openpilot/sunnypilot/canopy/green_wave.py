@@ -109,6 +109,22 @@ def target_at(wave, t_s):
   return round(base + amp * (0.5 + 0.5 * math.sin(ph)), 2)
 
 
+def offset_gain(limit_mph, current_total_mph, wave, now, cap=CAP_MPH):
+  """How many mph to ADD so the car sits at the wave target.
+
+  current_total_mph is where the car's set speed already is (limit plus whatever offset the learned
+  table asked for). The wave is a floor, never a second offset stacked on top: it tops the set speed
+  up to the target, never drags it back down, and never past limit + cap however the two are combined.
+  """
+  if not limit_mph or limit_mph <= 0.:
+    return 0.0
+  target = target_at(wave, now)
+  if target is None:
+    return 0.0
+  want = min(float(target), float(limit_mph) + cap)
+  return round(max(0.0, want - float(current_total_mph)), 2)
+
+
 def signals_from_view(view, limit_mph, now):
   """The signals the Look Ahead view already resolved on this path, nearest first, with their timing."""
   out = []
