@@ -85,6 +85,24 @@ def record(ep, drive, rule_version=1):
   return rec
 
 
+def gps_pose(sm):
+  """(lat, lon, heading) from the SubMaster, or (None, None, None) if it has no GPS.
+
+  controlsd does not subscribe to gpsLocationExternal, so this is normally None and
+  the record keeps its position blank. Looked up here, in its own try, so a missing or
+  late service can never stop turn_path.update from running.
+  """
+  try:
+    if sm is None:
+      return None, None, None
+    if hasattr(sm, "all_checks") and not sm.all_checks(["gpsLocationExternal"]):
+      return None, None, None
+    gps = sm["gpsLocationExternal"]
+    return gps.latitude, gps.longitude, gps.bearingDeg
+  except Exception:
+    return None, None, None
+
+
 def _band(mph):
   try:
     mph = float(mph)

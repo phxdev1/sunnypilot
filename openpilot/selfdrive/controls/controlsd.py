@@ -30,9 +30,12 @@ except Exception:
   TurnRelease = None
 
 try:
-  from openpilot.sunnypilot.canopy.turn_path import TurnPath
+  from openpilot.sunnypilot.canopy.turn_path import TurnPath, gps_pose as GPS_POSE
 except Exception:
   TurnPath = None
+
+  def GPS_POSE(sm):
+    return None, None, None
 
 State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
@@ -134,15 +137,19 @@ class Controls(ControlsExt):
       except Exception:
         pass
 
-    # turn path head: shadow only, it logs the would-be path and never steers
+    # turn path head: shadow only, it logs the would-be path and never steers.
+    # GPS is looked up in its own try: this process does not subscribe to
+    # gpsLocationExternal, and the update must run anyway with no position.
     if self.turn_path is not None:
+      lat = lon = heading = None
       try:
-        gps = self.sm['gpsLocationExternal'] if self.sm.all_checks(['gpsLocationExternal']) else None
+        lat, lon, heading = GPS_POSE(self.sm)
+      except Exception:
+        lat = lon = heading = None
+      try:
         self.turn_path.update(CS.vEgo, CS.leftBlinker, CS.rightBlinker, CS.steeringPressed,
                               CS.steeringAngleDeg, _lat_active, model_v2.action.desiredCurvature,
-                              gps.latitude if gps is not None else None,
-                              gps.longitude if gps is not None else None,
-                              gps.bearingDeg if gps is not None else None)
+                              lat, lon, heading)
       except Exception:
         pass
 

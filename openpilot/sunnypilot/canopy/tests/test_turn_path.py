@@ -178,3 +178,61 @@ def test_turn_path_is_control_tier():
   assert "turn_path" in heads.TIER_CONTROL
   hs = heads.HeadSet(root="/nonexistent-canopy-heads")
   assert hs.floor(FEATURE) == heads.N_MIN_CONTROL
+
+
+class FakeSubMaster:
+  """A SubMaster with no gpsLocationExternal, like controlsd's real one."""
+
+  def __init__(self, services=()):
+    self.services = set(services)
+
+  def all_checks(self, names):
+    return all(n in self.services for n in names)
+
+  def __getitem__(self, name):
+    if name not in self.services:
+      raise KeyError(name)
+    raise AssertionError("no service data in this fake")
+
+
+def test_gps_pose_is_none_when_the_service_is_not_subscribed():
+  assert turn_path.gps_pose(FakeSubMaster()) == (None, None, None)
+  assert turn_path.gps_pose(None) == (None, None, None)
+
+
+def test_gps_pose_returns_position_when_it_is_there():
+  class GPS:
+    latitude, longitude, bearingDeg = 33.4, -111.8, 90.0
+
+  class Sm(FakeSubMaster):
+    def __getitem__(self, name):
+      return GPS()
+
+    def all_checks(self, names):
+      return True
+
+  assert turn_path.gps_pose(Sm()) == (33.4, -111.8, 90.0)
+
+
+def test_wiring_calls_update_even_without_gps(tmp_path):
+  """The controlsd block, as written: gps_pose may fail, update must still run."""
+  seen = []
+  hs = FakeHeads()
+
+  class Spy(TurnPath):
+    def update(self, *a, **k):
+      seen.append((a, k))
+      return super().update(*a, **k)
+
+  tp = Spy(heads=hs, gates=FakeGates(), log_path=str(tmp_path / "turn_path.jsonl"),
+           off_flag=str(tmp_path / "off"), clock=lambda: 0.0, wall=lambda: 0.0)
+  sm = FakeSubMaster()
+  lat = lon = heading = None
+  try:
+    lat, lon, heading = turn_path.gps_pose(sm)
+  except Exception:
+    lat = lon = heading = None
+  tp.update(8.0 * MPH_TO_MS, True, False, False, 5.0, True, -0.02, lat, lon, heading)
+  assert len(seen) == 1
+  assert seen[0][0][7:] == (None, None, None)
+  assert tp.episode is not None
