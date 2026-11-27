@@ -15,6 +15,12 @@ the tailnet and nowhere else (not from the LTE side, not from home Wi-Fi).
   /hud frame "v": 2 adds "lead.mph" (lead car speed over the ground) and "nav_lanes": the nav lane strip
                (lanes, current, target, confident) passed through from /dev/shm/canopy/nav_lanes.json while
                that file is under 2 s old, else null. The nav side writes it; hudd never guesses lanes.
+  /hud frame "signal": the comma's own read of the mapped signal it is closing on (canopy/signal_read.py):
+               {m, state: red|green|unknown, conf, lat, lon}, or null when none is ahead. A plan read,
+               never a colour read. It also goes to Forge on the bus (topic "signal", key "ahead",
+               on every state change and at most every 3 s) so a consumer off the car network can
+               follow it; the head unit draws it over the top of its own prediction.
+  /events also carries {"type": "signal", "state", "m", "conf"} when the read changes signal or state.
   GET /banner, POST /banner {"source","text","style":"info"|"heads_up","timeout_s"},
   DELETE /banner?source=NAME   the status banner on the comma screen (canopy/banner.py).
                Changes also go out on /events as {"type": "banner", "banner": {...} | null},
@@ -65,9 +71,11 @@ from openpilot.common.gps import get_gps_location_service
 from openpilot.common.params import Params
 
 from openpilot.sunnypilot.canopy import banner
+from openpilot.sunnypilot.canopy import bus as canopy_bus
 from openpilot.sunnypilot.canopy import heads as canopy_heads
 from openpilot.sunnypilot.canopy import leadkind
 from openpilot.sunnypilot.canopy import lookahead_local
+from openpilot.sunnypilot.canopy import signal_read
 from openpilot.sunnypilot.canopy import sounds as canopy_sounds
 from openpilot.sunnypilot.canopy import params_file
 
@@ -88,6 +96,8 @@ _params = Params()
 _GPS = get_gps_location_service(_params)
 _lk = {"obj": None}
 _la = {"view": None, "t": 0.0, "err": None, "n": 0}
+_sig = {"obj": None, "state": None, "t": 0.0, "key": None}
+SIGNAL_BUS_S = 3.0  # the read goes to the bus on every state change and at most this often
 
 _params_cache = {"mtime": None, "data": None}
 
@@ -114,6 +124,25 @@ def lead_kind():
   if _lk["obj"] is None:
     _lk["obj"] = leadkind.LeadKind()
   return _lk["obj"]
+
+
+def signal_reader():
+  if _sig["obj"] is None:
+    _sig["obj"] = signal_read.SignalRead()
+  return _sig["obj"]
+
+
+def publish_signal(sig, now):
+  """The read on the bus: on a state change, else at most every SIGNAL_BUS_S. The bus drops an unchanged payload."""
+  if sig is None:
+    if _sig["state"] not in (None, "none"):
+      _sig["state"], _sig["t"] = "none", now
+      canopy_bus.bus().publish("signal", {"m": None, "state": "none", "conf": 0.0, "lat": None, "lon": None}, key="ahead")
+    return
+  if sig["state"] == _sig["state"] and now - _sig["t"] < SIGNAL_BUS_S:
+    return
+  _sig["state"], _sig["t"] = sig["state"], now
+  canopy_bus.bus().publish("signal", sig, key="ahead")
 
 
 def cue_sound(slot: str) -> str:
@@ -293,11 +322,13 @@ def build_frame(sm) -> dict:
   }
   lk = None
   try:
+    g = sm[_GPS] if sm.recv_frame[_GPS] > 0 and sm[_GPS].hasFix else None
+  except Exception:
+    g = None
+  try:
     lk = lead_kind()
     rpy = list(sm["liveCalibration"].rpyCalib) or [0.0, 0.0, 0.0]
-    g = sm[_GPS]
-    gps = (g.latitude, g.longitude) if sm.recv_frame[_GPS] > 0 and g.hasFix else None
-    lk.observe(lead, rpy, gps)
+    lk.observe(lead, rpy, (g.latitude, g.longitude) if g is not None else None)
   except Exception:
     lk = None  # display only
   if lead.present:
@@ -309,6 +340,14 @@ def build_frame(sm) -> dict:
     if info:
       f["lead"].update({k: info.get(k) for k in ("kind", "kind_conf", "make", "model", "color", "plate")})
       f["lead"]["kind"] = f["lead"]["kind"] or "unknown"
+  f["signal"] = None
+  try:
+    f["signal"] = signal_reader().update(
+      g.latitude if g is not None else None, g.longitude if g is not None else None,
+      g.bearingDeg if g is not None else None, cs.vEgo,
+      list(md.position.x), list(md.velocity.x), lead.dRel if lead.present else None)
+  except Exception:
+    f["signal"] = None  # display only
   return f
 
 
@@ -371,6 +410,12 @@ def events_from(prev, cur) -> list[dict]:
     _lead["since"] = None
   if prev["lane_change"] != cur["lane_change"]:
     ev.append({"type": "lane_change", "state": cur["lane_change"], "dir": cur["lane_change_dir"]})
+  sig = cur.get("signal")
+  ident = None if sig is None else (sig.get("state"), sig.get("lat"), sig.get("lon"))
+  if ident != _sig["key"] and (ident is not None or _sig["key"] is not None):
+    _sig["key"] = ident
+    ev.append({"type": "signal", "state": (sig or {}).get("state", "unknown"), "m": (sig or {}).get("m"),
+               "conf": (sig or {}).get("conf", 0.0)})
   if prev["alert"] != cur["alert"] and cur["alert"]:
     ev.append({"type": "alert", "text": cur["alert"]})
   if prev["sound"] != cur["sound"] and cur["sound"] in CUE_SLOTS:
@@ -526,7 +571,7 @@ def pump():
     if now < next_t:
       continue
     next_t = now + 1.0 / HZ
-    if os.path.exists(OFF_FLAG) or not (_clients_hud or _clients_ev):
+    if os.path.exists(OFF_FLAG):
       prev = None
       continue
     try:
@@ -537,6 +582,10 @@ def pump():
     if cur is None:
       continue
     _last["frame"], _last["t"] = cur, now
+    try:
+      publish_signal(cur.get("signal"), now)  # the read goes to Forge whether or not anyone is watching locally
+    except Exception:
+      pass
     if _clients_hud and hud_due(_hud_sent, cur, now):
       _hud_sent["frame"], _hud_sent["t"] = cur, now
       publish(_clients_hud, json.dumps(cur, separators=(",", ":")))

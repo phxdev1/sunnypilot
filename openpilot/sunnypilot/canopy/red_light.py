@@ -91,14 +91,19 @@ class TrafficSignals:
 
 
 def plan_stop_point(model, min_decel: float = MIN_DECEL) -> float | None:
-  """Where (metres ahead) the model plan comes to a stop, or None if it isn't stopping.
-
-  The plan only looks ~10 s ahead, which at 40 mph ends short of a light 150 m out. When it ends
-  still moving but braking, carry its last deceleration on to a stop."""
+  """Where (metres ahead) the model plan comes to a stop, or None if it isn't stopping."""
   try:
     xs, vs = list(model.position.x), list(model.velocity.x)
   except AttributeError:
     return None
+  return stop_point(xs, vs, min_decel)
+
+
+def stop_point(xs, vs, min_decel: float = MIN_DECEL) -> float | None:
+  """The plan's stop, from plain x and v lists (the same maths plan_stop_point uses).
+
+  The plan only looks ~10 s ahead, which at 40 mph ends short of a light 150 m out. When it ends
+  still moving but braking, carry its last deceleration on to a stop."""
   if len(xs) < 5 or len(xs) != len(vs):
     return None
   for x, v in zip(xs, vs):
