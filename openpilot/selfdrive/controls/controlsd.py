@@ -24,6 +24,11 @@ from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 
 from openpilot.sunnypilot.selfdrive.controls.controlsd_ext import ControlsExt
 
+try:
+  from openpilot.sunnypilot.canopy.turn_release import TurnRelease
+except Exception:
+  TurnRelease = None
+
 State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
@@ -69,6 +74,7 @@ class Controls(ControlsExt):
       self.LaC = LatControlTorque(self.CP, self.CP_SP, self.CI, DT_CTRL)
 
     self.LaC = ControlsExt.initialize_lateral_control(self, self.LaC, self.CI, DT_CTRL)
+    self.turn_release = TurnRelease() if TurnRelease is not None else None
 
   def update(self):
     self.sm.update(15)
@@ -114,6 +120,13 @@ class Controls(ControlsExt):
 
     # Get which state to use for active lateral control
     _lat_active = self.get_lat_active(self.sm)
+    if self.turn_release is not None:
+      try:
+        if self.turn_release.update(CS.vEgo, CS.leftBlinker, CS.rightBlinker, CS.steeringPressed, CS.steeringAngleDeg,
+                                    model_v2.action.desiredCurvature, _lat_active):
+          _lat_active = False
+      except Exception:
+        pass
 
     CC.latActive = _lat_active and not CS.steerFaultTemporary and not CS.steerFaultPermanent and \
                    (not standstill or self.CP.steerAtStandstill)
