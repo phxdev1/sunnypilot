@@ -112,11 +112,33 @@ def test_refight_demotes(tmp_path):
   tr = make_tr(tmp_path, gates, t)
   drive(tr, t, 1.0, v_ego=8 * MPH_TO_MS, left=True, pressed=True, angle=120.0, curv=0.0, lat=True)
   drive(tr, t, 1.5, v_ego=8 * MPH_TO_MS, angle=5.0, curv=0.0, lat=True)
-  drive(tr, t, 1.0, v_ego=8 * MPH_TO_MS, pressed=True, angle=100.0, curv=0.0, lat=True)
+  drive(tr, t, 1.0, v_ego=8 * MPH_TO_MS, pressed=True, angle=55.0, curv=0.0, lat=True)
 
   assert len(gates.demotes) == 1
   assert gates.demotes[0][0] == FEATURE
   assert gates.demotes[0][2] == "refight"
+
+
+def test_next_turn_is_not_refight(tmp_path):
+  t = [0.0]
+  gates = FakeGates(live=True)
+  tr = make_tr(tmp_path, gates, t)
+  drive(tr, t, 1.0, v_ego=8 * MPH_TO_MS, left=True, pressed=True, angle=120.0, curv=0.0, lat=True)
+  drive(tr, t, 1.5, v_ego=8 * MPH_TO_MS, angle=5.0, curv=0.0, lat=True)
+  drive(tr, t, 1.0, v_ego=8 * MPH_TO_MS, left=True, pressed=True, angle=120.0, curv=0.0, lat=True)
+
+  assert gates.demotes == []
+
+
+def test_small_nudge_is_not_refight(tmp_path):
+  t = [0.0]
+  gates = FakeGates(live=True)
+  tr = make_tr(tmp_path, gates, t)
+  drive(tr, t, 1.0, v_ego=8 * MPH_TO_MS, left=True, pressed=True, angle=120.0, curv=0.0, lat=True)
+  drive(tr, t, 1.5, v_ego=8 * MPH_TO_MS, angle=5.0, curv=0.0, lat=True)
+  drive(tr, t, 1.0, v_ego=8 * MPH_TO_MS, pressed=True, angle=20.0, curv=0.0, lat=True)
+
+  assert gates.demotes == []
 
 
 def test_conf_model_disagrees(tmp_path):

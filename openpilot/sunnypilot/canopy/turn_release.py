@@ -26,7 +26,8 @@ HOLD_S = 0.5            # press must be held this long before a release
 CENTER_DEG = 30.0       # re-engage only when |angle| below this
 QUIET_S = 1.0           # and no press and no blinker for this long
 MAX_EPISODE_S = 30.0
-REFIGHT_S = 3.0         # a press this soon after re-engage marks the release as fail
+REFIGHT_DEG = 45.0      # and the press moved the wheel this far from where it was at re-engage
+REFIGHT_S = 2.0         # a press this soon after re-engage marks the release as fail
 TURN_DONE_DEG = 90.0    # peak |angle| in an episode at or above this means a real turn was made
 
 MAX_DECISIONS_BYTES = 20 * 1024 * 1024
@@ -55,6 +56,7 @@ class TurnRelease:
     self.released = False
     self.quiet_since = None
     self.reengaged_at = None
+    self.reengage_angle = 0.0
     self.last_live_episode = None
     self._last_now = None
 
@@ -71,10 +73,10 @@ class TurnRelease:
 
       # a press right after a release means the release was wrong
       if self.reengaged_at is not None:
-        if steering_pressed and now - self.reengaged_at <= REFIGHT_S and self.last_live_episode is not None:
+        if self.press_since is not None and now - self.press_since >= HOLD_S and self.press_since - self.reengaged_at <= REFIGHT_S and not turn_context and abs(steering_angle_deg - self.reengage_angle) >= REFIGHT_DEG and self.last_live_episode is not None:
           self._demote(self.last_live_episode, "refight")
           self.reengaged_at = None
-        elif now - self.reengaged_at > REFIGHT_S:
+        elif now - self.reengaged_at > REFIGHT_S + HOLD_S:
           self.reengaged_at = None
 
       if steering_pressed:
@@ -125,8 +127,11 @@ class TurnRelease:
         if (self.quiet_since is not None and now - self.quiet_since >= QUIET_S) or \
            now - ep["t0"] >= MAX_EPISODE_S or mph >= MAX_MPH + 6:
           self._finish(ep, now)
-          if ep["live"]:
+          if ep["live"] and not steering_pressed:
+            # only a quiet hand-back is checked for a refight: a speed or time end while he
+            # still holds the wheel is his turn running on, not the car fighting him
             self.reengaged_at = now
+            self.reengage_angle = steering_angle_deg
             self.last_live_episode = ep
           self.episode = None
           self.released = False
