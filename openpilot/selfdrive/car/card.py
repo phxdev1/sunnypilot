@@ -130,7 +130,7 @@ class Car:
 
     self.leaf_bsm = LeafBlindspot() if self.CP.carFingerprint in ("NISSAN_LEAF", "NISSAN_LEAF_IC") else None
 
-    # Canopy: configurable Leaf assist torque (stock unless /data/canopy/assist_torque says otherwise)
+    # Canopy: configurable Leaf assist torque (stock unless /data/canopy/assist_level says otherwise)
     self.assist_torque = AssistTorque() if AssistTorque is not None and self.CP.brand == "nissan" else None
 
     self.CP.alternativeExperience = 0
