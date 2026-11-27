@@ -24,6 +24,8 @@ import urllib.request
 import numpy as np
 
 FORGE = os.environ.get("CANOPY_LEADCLASS_URL", "https://forge.mpvt.io/canopy/lead")
+# Cloudflare answers the default urllib User-Agent with 1010 before the request reaches Forge.
+USER_AGENT = "canopy-lead/1"
 TOKEN_PATH = "/data/canopy/forge_token"
 OFF_FLAG = "/data/canopy/leadkind_off"
 REALDATA = "/data/media/0/realdata"
@@ -110,7 +112,8 @@ def _token() -> str:
 
 def _post(path, body, headers):
   req = urllib.request.Request(FORGE + path, data=body, method="POST",
-                               headers=dict({"Content-Type": "image/jpeg", "X-Canopy-Token": _token()}, **headers))
+                               headers=dict({"Content-Type": "image/jpeg", "X-Canopy-Token": _token(),
+                                             "User-Agent": USER_AGENT}, **headers))
   with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
     return json.load(r)
 
