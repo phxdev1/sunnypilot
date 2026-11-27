@@ -55,4 +55,4 @@ onramp_merges, trouble_spots, handback_corners, hold_targets, blinker_hints.
 3. Propose through leafci in Park.
 
 ## State / next
-- (update below as you go)
+- Step 2 done (Nov 27): CanopyLayoutMici page (assist strength, 4 flags, read-only gates/tuned/garage, engaged lock) plus a guarded "canopy" button in mici SettingsLayoutSP; next is step 3, propose through leafci in Park.
