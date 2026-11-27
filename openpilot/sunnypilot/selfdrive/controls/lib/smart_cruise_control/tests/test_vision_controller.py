@@ -16,7 +16,7 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.car.cruise import V_CRUISE_UNSET
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control import MIN_V
-from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.vision_controller import SmartCruiseControlVision, _ENTERING_PRED_LAT_ACC_TH
+from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.vision_controller import SmartCruiseControlVision, _ENTERING_PRED_LAT_ACC_TH, _A_LAT_REG_MAX
 from openpilot.common.test import OpenpilotTestCase
 
 VisionState = custom.LongitudinalPlanSP.SmartCruiseControl.VisionState
@@ -207,3 +207,23 @@ class TestSmartCruiseControlVision(OpenpilotTestCase):
       assert self.scc_v.state == VisionState.enabled
 
   # TODO-SP: mock modelV2 data to test other states
+
+  def test_v_target_follows_plan_curvature_not_current_speed(self):
+    # A fixed plan through a 294 m curve (k = 0.0034) has one comfortable speed no matter
+    # how fast the car is going right now. Take drive 17 t=3151: 71 mph in that curve, the
+    # old derivation asked for 60 and then 47 as the car slowed, which is the complaint.
+    n = len(ModelConstants.T_IDXS)
+    k = 0.0034
+    plan_speed = 29.0
+    mdl = generate_modelV2()
+    mdl.modelV2.velocity.x = [float(plan_speed) for _ in range(n)]
+    mdl.modelV2.orientationRate.z = [float(k * plan_speed) for _ in range(n)]
+    self.sm["modelV2"] = mdl.modelV2
+
+    self.scc_v.update(self.sm, True, False, plan_speed, 0.0, 0.0)
+    v_target_at_71mph = self.scc_v.v_target
+    assert np.isclose(v_target_at_71mph, (_A_LAT_REG_MAX / k) ** 0.5, rtol=1e-3)
+
+    # the same plan, the car now half way down the slowdown: the target must not fall
+    self.scc_v.update(self.sm, True, False, 18.0, 0.0, 0.0)
+    assert np.isclose(self.scc_v.v_target, v_target_at_71mph, rtol=1e-6)
