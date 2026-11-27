@@ -4,9 +4,9 @@ import json
 import pytest
 
 from openpilot.sunnypilot.canopy import assist_torque, settings_store
-from openpilot.sunnypilot.canopy.settings_store import (FLAGS, FlagSwitch, flag, gate_summary,
-                                                       garage_summary, read_json, set_assist_level,
-                                                       tuned_values)
+from openpilot.sunnypilot.canopy.settings_store import (FLAGS, PARAMS, FlagSwitch, choice_index, flag,
+                                                       gate_summary, garage_summary, param, read_json,
+                                                       read_param, set_assist_level, tuned_values, write_param)
 
 
 def write_json(base, name, obj):
@@ -20,6 +20,11 @@ def write_json(base, name, obj):
   ("look_ahead", False, True),
   ("lead_classifier", False, True),
   ("parking_release", True, False),
+  ("blinker_intent", False, True),
+  ("forge_route", False, True),
+  ("turn_release", False, True),
+  ("voice_merge_street", True, False),
+  ("voice_merge_freeway", True, False),
 ])
 def test_flag_get_set_round_trip(tmp_path, key, on_when_present, default_on):
   sw = flag(key)
@@ -79,8 +84,10 @@ def test_unknown_key_raises():
 
 
 def test_flags_order_and_control():
-  assert [f.key for f in FLAGS] == ["hud", "look_ahead", "lead_classifier", "parking_release"]
-  assert [f.control for f in FLAGS] == [False, False, False, True]
+  assert [f.key for f in FLAGS] == ["hud", "look_ahead", "lead_classifier", "parking_release",
+                                    "blinker_intent", "forge_route", "turn_release",
+                                    "voice_merge_street", "voice_merge_freeway"]
+  assert [f.control for f in FLAGS] == [False, False, False, True, False, False, True, True, True]
   assert all(isinstance(f, FlagSwitch) for f in FLAGS)
   with pytest.raises(Exception):
     FLAGS[0].title = "changed"  # frozen
@@ -177,3 +184,111 @@ def test_set_assist_level_writes_and_validates(monkeypatch):
     with pytest.raises(ValueError):
       set_assist_level(bad)
   assert seen == [4]
+
+
+# ---- openpilot params ----
+
+class FakeParams:
+  """Duck-typed stand-in for openpilot Params so these tests never touch the device."""
+
+  def __init__(self, values=None):
+    self.values = dict(values or {})
+    self.written = {}
+
+  def get_bool(self, key):
+    return bool(self.values.get(key, False))
+
+  def get(self, key, return_default=False):
+    # a real Params returns its declared default when unset; None here exercises the store's
+    # own stock-default path for anything that cannot be parsed
+    return self.values.get(key)
+
+  def put_bool(self, key, value, block=False):
+    self.written[key] = value
+
+  def put(self, key, value, block=False):
+    self.written[key] = value
+
+
+def test_params_cover_the_missing_sunnypilot_pages():
+  assert [p.name for p in PARAMS] == [
+    "QuietMode", "LaneTurnDesire", "LaneTurnValue", "AutoLaneChangeTimer",
+    "BlinkerPauseLateralControl", "BlinkerMinLateralControlSpeed", "BlinkerLateralReengageDelay",
+    "LagdToggle", "LagdToggleDelay", "CameraOffset",
+  ]
+  for spec in PARAMS:
+    assert spec.title and spec.description.endswith(".")
+    if spec.is_choice:
+      assert len(spec.labels) == len(spec.values)
+      assert spec.default in spec.values
+  assert not param("QuietMode").is_choice
+
+
+def test_param_lookup_keyerror():
+  with pytest.raises(KeyError):
+    param("NotAParam")
+
+
+def test_read_param_switch_and_choice():
+  p = FakeParams({"QuietMode": True, "LaneTurnValue": 19.0, "BlinkerLateralReengageDelay": "3"})
+  assert read_param(param("QuietMode"), p) is True
+  assert read_param(param("LaneTurnValue"), p) == 19
+  assert read_param(param("BlinkerLateralReengageDelay"), p) == 3
+
+
+def test_read_param_scales_hundredths_back_into_choices():
+  # LagdToggleDelay and CameraOffset are stored as real floats, hundredths on the page
+  p = FakeParams({"LagdToggleDelay": 0.2, "CameraOffset": -0.05})
+  assert read_param(param("LagdToggleDelay"), p) == 20
+  assert read_param(param("CameraOffset"), p) == -5
+
+
+def test_read_param_stock_defaults():
+  p = FakeParams()
+
+  class Boom:
+    def get_bool(self, key):
+      raise RuntimeError("no params")
+
+    def get(self, key, return_default=False):
+      raise RuntimeError("no params")
+
+  assert read_param(param("QuietMode"), p) is False
+  assert read_param(param("LaneTurnValue"), p) == 19
+  assert read_param(param("CameraOffset"), p) == 0
+  assert read_param(param("LagdToggle"), Boom()) is True
+  assert read_param(param("CameraOffset"), Boom()) == 0
+
+
+def test_write_param_switch_and_choice():
+  p = FakeParams()
+  write_param(param("QuietMode"), True, p)
+  write_param(param("LaneTurnValue"), 15, p)
+  write_param(param("BlinkerLateralReengageDelay"), 3, p)
+  assert p.written == {"QuietMode": True, "LaneTurnValue": 15.0, "BlinkerLateralReengageDelay": 3}
+
+
+def test_write_param_keeps_stored_units():
+  # params_keys.h declares these FLOAT, and each unit matters to the controller that reads them
+  p = FakeParams()
+  write_param(param("LagdToggleDelay"), 20, p)
+  write_param(param("CameraOffset"), -5, p)
+  assert p.written == {"LagdToggleDelay": 0.2, "CameraOffset": -0.05}
+  assert all(isinstance(v, float) for v in p.written.values())
+
+
+def test_write_param_rejects_values_outside_choices():
+  p = FakeParams()
+  for bad in (1900, 4, "left", None):
+    with pytest.raises(ValueError):
+      write_param(param("LaneTurnValue"), bad, p)
+  assert p.written == {}
+
+
+def test_choice_index_finds_nearest():
+  spec = param("LaneTurnValue")
+  assert spec.values[choice_index(spec, 19)] == 19
+  assert spec.values[choice_index(spec, 18.6)] == 19
+  assert spec.values[choice_index(spec, 99)] == spec.values[-1]
+  assert choice_index(spec, None) == 0
+  assert choice_index(param("QuietMode"), True) == 0

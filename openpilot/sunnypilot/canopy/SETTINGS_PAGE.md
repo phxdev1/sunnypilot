@@ -55,4 +55,13 @@ onramp_merges, trouble_spots, handback_corners, hold_targets, blinker_hints.
 3. Propose through leafci in Park.
 
 ## State / next
-- Step 2 done (Nov 27): CanopyLayoutMici page (assist strength, 4 flags, read-only gates/tuned/garage, engaged lock) plus a guarded "canopy" button in mici SettingsLayoutSP; next is step 3, propose through leafci in Park.
+- Nov 27 17:40Z: 0a0bb3e settings_store, d05818a mici page committed; import + data smoke on the comma OK
+  (flags all read, assist 1, 25 gates, garage "zone 40 m, heading 342"). Rendering untested (no pyray on
+  Forge). Proposed d05818a to leafci (replaces turn thread's 2ee6d33 candidate, contains it).
+- Next: after it ships, look at the page on the comma.
+- Step 2b (Nov 27): loaded the rest in. FLAGS now 9 (added blinker_intent_off, forge_route_off,
+  turn_release.off, voice_merge_live, voice_merge_live_freeway; the voice pair is present=on and Forge
+  may flip it). New canopy_driving.py page behind a "driving" row on the canopy page holds the 10 PARAMS
+  the big-UI Models/Steering pages hide from mici (QuietMode, lane turn, auto lane change, blinker pause,
+  Lagd/steer delay, CameraOffset). Left for its own pass: MADS / EnforceTorqueControl / NNLC.
+

@@ -6,8 +6,9 @@ openpilot.sunnypilot.canopy.settings_store, and every call is wrapped so a bad f
 the settings screen down.
 """
 from openpilot.system.ui.widgets.scroller import NavScroller
-from openpilot.selfdrive.ui.mici.widgets.button import BigMultiToggle, BigToggle, GreyBigButton
+from openpilot.selfdrive.ui.mici.widgets.button import BigButton, BigMultiToggle, BigToggle, GreyBigButton
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.ui.lib.application import gui_app
 from openpilot.sunnypilot.canopy import settings_store
 
 ASSIST_OPTIONS = ("1 stock", "2", "3", "4", "5")
@@ -33,8 +34,11 @@ class CanopyLayoutMici(NavScroller):
     self._tuned = GreyBigButton("tuned values", "")
     self._garage = GreyBigButton("garage", "")
 
+    self._driving = BigButton("driving", "lane turn, blinker and steer delay")
+    self._driving.set_click_callback(self._open_driving)
+
     self._scroller.add_widgets([self._assist] + [row for _, row in self._flags] +
-                               [self._gates, self._tuned, self._garage])
+                               [self._driving, self._gates, self._tuned, self._garage])
 
     # nothing changes while Canopy is engaged
     for row in [self._assist] + [row for _, row in self._flags]:
@@ -121,5 +125,13 @@ class CanopyLayoutMici(NavScroller):
   def _on_flag(self, switch, checked):
     try:
       switch.set(checked)
+    except Exception:
+      pass
+
+  def _open_driving(self):
+    # imported on click so a broken driving page never takes the settings screen down
+    try:
+      from openpilot.selfdrive.ui.sunnypilot.mici.layouts.canopy_driving import CanopyDrivingLayoutMici
+      gui_app.push_widget(CanopyDrivingLayoutMici())
     except Exception:
       pass

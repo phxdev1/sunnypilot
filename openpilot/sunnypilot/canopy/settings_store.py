@@ -7,8 +7,10 @@ back to the stock default, so a bad card or a half-read directory never silently
 something the driver relies on.
 
 Writes are atomic (tmp + os.replace) so a power cut mid-change leaves either the old state or the
-new one, never an empty half-written file. Everything is pure python and safe to import anywhere:
-no pyray, no cereal.
+new one, never an empty half-written file. The openpilot params that sunnypilot buries in big-UI
+pages are described here as plain data and read/written through Params lazily, so this module
+imports nothing device-specific. Everything is pure python and safe to import anywhere: no pyray,
+no cereal.
 """
 import json
 import math
@@ -122,6 +124,51 @@ FLAGS = (
     default_on=False,
     control=True,
   ),
+  FlagSwitch(
+    key="blinker_intent",
+    title="blinker intent",
+    description="Reads your blinker and the road to guess the lane change or turn you mean.",
+    filename="blinker_intent_off",
+    on_when_present=False,
+    default_on=True,
+    control=False,
+  ),
+  FlagSwitch(
+    key="forge_route",
+    title="forge route",
+    description="Sends Forge traffic over the car's own LTE when home Wi-Fi is out of reach.",
+    filename="forge_route_off",
+    on_when_present=False,
+    default_on=True,
+    control=False,
+  ),
+  FlagSwitch(
+    key="turn_release",
+    title="turn release",
+    description="Lets go of the wheel for a moment when you hold it through a slow turn.",
+    filename="turn_release.off",
+    on_when_present=False,
+    default_on=True,
+    control=True,
+  ),
+  FlagSwitch(
+    key="voice_merge_street",
+    title="voice merge, street",
+    description="Starts the lane change Zia calls out below 50 mph. Forge turns this on as its gate goes live.",
+    filename="voice_merge_live",
+    on_when_present=True,
+    default_on=False,
+    control=True,
+  ),
+  FlagSwitch(
+    key="voice_merge_freeway",
+    title="voice merge, freeway",
+    description="Starts the lane change Zia calls out at 50 mph and up. Forge turns this on as its gate goes live.",
+    filename="voice_merge_live_freeway",
+    on_when_present=True,
+    default_on=False,
+    control=True,
+  ),
 )
 
 _BY_KEY = {f.key: f for f in FLAGS}
@@ -130,6 +177,126 @@ _BY_KEY = {f.key: f for f in FLAGS}
 def flag(key: str) -> FlagSwitch:
   """The switch for ``key``. Raises KeyError for anything not in FLAGS."""
   return _BY_KEY[key]
+
+
+# ---- openpilot params (sunnypilot hides most of these in big-UI pages mici never loads) ----
+
+@dataclass(frozen=True)
+class ParamSetting:
+  """One openpilot param the page can show and change.
+
+  Empty ``values`` means a plain on/off switch; otherwise ``labels`` and ``values`` are parallel
+  and the row steps through them. ``divisor`` converts a choice value to what the param really
+  stores (LagdToggleDelay is hundredths on screen, seconds in Params), and ``float_param`` marks
+  keys declared FLOAT in params_keys.h so they are written as floats and never as bare ints.
+  """
+  name: str
+  title: str
+  description: str
+  default: object
+  labels: tuple[str, ...] = ()
+  values: tuple[int, ...] = ()
+  divisor: int = 1
+  float_param: bool = False
+
+  @property
+  def is_choice(self) -> bool:
+    return bool(self.values)
+
+
+def _choice(values, label):
+  return tuple(label(v) for v in values), tuple(values)
+
+
+def _stored_seconds(v):
+  return f"{v / 100:.2f} s"
+
+
+def _metres(v):
+  return f"+{v / 100:.2f} m" if v > 0 else f"{v / 100:.2f} m"
+
+
+_AUTO_LC_LABELS = ("off", "nudge", "nudgeless", "half second", "1 s", "2 s", "3 s")
+_AUTO_LC_VALUES = (-1, 0, 1, 2, 3, 4, 5)
+
+PARAMS = (
+  ParamSetting("QuietMode", "quiet mode",
+               "Silences canopy's spoken cues; the screen still shows everything.", False),
+  ParamSetting("LaneTurnDesire", "lane turn desires",
+               "Plans the turn you signal for at walking pace, at the nearest drivable path.", False),
+  ParamSetting("LaneTurnValue", "lane turn speed",
+               "Top speed for a lane turn desire, in mph. 19 is the usual setting.", 19,
+               *_choice(range(5, 21), lambda v: f"{v} mph"), float_param=True),
+  ParamSetting("AutoLaneChangeTimer", "auto lane change",
+               "How the car waits before taking an automatic lane change.", 0,
+               _AUTO_LC_LABELS, _AUTO_LC_VALUES),
+  ParamSetting("BlinkerPauseLateralControl", "pause lateral on blinker",
+               "Drops lateral control while your blinker is on below the speed you set.", False),
+  ParamSetting("BlinkerMinLateralControlSpeed", "blinker pause below",
+               "Speed under which the blinker pauses lateral control, in mph (km/h when metric).", 20,
+               *_choice(range(0, 31, 5), lambda v: f"{v}")),
+  ParamSetting("BlinkerLateralReengageDelay", "reengage delay",
+               "Seconds between the blinker ending and steering coming back.", 0,
+               *_choice(range(0, 11), lambda v: f"{v} s")),
+  ParamSetting("LagdToggle", "live steer delay",
+               "Lets the car learn its own steering delay instead of using a fixed one.", True),
+  ParamSetting("LagdToggleDelay", "software delay",
+               "The fixed steering delay used when live learning is off, in seconds.", 20,
+               *_choice(range(5, 51, 5), _stored_seconds), divisor=100, float_param=True),
+  ParamSetting("CameraOffset", "camera offset",
+               "Shifts the model's center left (+) or right (-), in metres.", 0,
+               *_choice(range(-35, 36, 5), _metres), divisor=100, float_param=True),
+)
+
+_PARAM_BY_NAME = {p.name: p for p in PARAMS}
+
+
+def param(name: str) -> ParamSetting:
+  """The param for ``name``. Raises KeyError for anything not in PARAMS."""
+  return _PARAM_BY_NAME[name]
+
+
+def _open_params():
+  """The car's Params, imported here so this module stays import-safe off the device."""
+  from openpilot.common.params import Params
+  return Params()
+
+
+def read_param(setting: ParamSetting, params=None):
+  """The stored value, or the stock default when the param cannot be read."""
+  try:
+    p = params if params is not None else _open_params()
+    if not setting.is_choice:
+      return bool(p.get_bool(setting.name))
+    return int(round(float(p.get(setting.name, return_default=True)) * setting.divisor))
+  except Exception:
+    return setting.default
+
+
+def write_param(setting: ParamSetting, value, params=None) -> None:
+  """Persist one param. Raises ValueError for a value outside its choices."""
+  if setting.is_choice:
+    try:
+      v = int(round(float(value)))
+    except (TypeError, ValueError) as e:
+      raise ValueError(f"{setting.name} takes one of {setting.values}, got {value!r}") from e
+    if v not in setting.values:
+      raise ValueError(f"{setting.name} takes one of {setting.values}, got {value!r}")
+    stored = v / setting.divisor if (setting.float_param or setting.divisor != 1) else v
+    (params if params is not None else _open_params()).put(setting.name, stored, block=True)
+  else:
+    (params if params is not None else _open_params()).put_bool(setting.name, bool(value), block=True)
+
+
+def choice_index(setting: ParamSetting, value) -> int:
+  """Index of the choice closest to ``value``; 0 for a plain switch or unreadable value."""
+  if not setting.values:
+    return 0
+  try:
+    v = float(value)
+  except (TypeError, ValueError):
+    return 0
+  return min(range(len(setting.values)), key=lambda i: abs(setting.values[i] - v))
 
 
 # ---- assist strength (owned by the left turn thread; we only call read/write) ----

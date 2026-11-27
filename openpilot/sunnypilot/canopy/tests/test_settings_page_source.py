@@ -13,6 +13,7 @@ from openpilot.sunnypilot.canopy import settings_store
 
 REPO = Path(__file__).resolve().parents[4]
 CANOPY = REPO / "openpilot/selfdrive/ui/sunnypilot/mici/layouts/canopy.py"
+CANOPY_DRIVING = REPO / "openpilot/selfdrive/ui/sunnypilot/mici/layouts/canopy_driving.py"
 SETTINGS = REPO / "openpilot/selfdrive/ui/sunnypilot/mici/layouts/settings.py"
 
 BUTTON_CALLS = {"SettingsBigButton", "SunnylinkBigButton", "BigButton", "BigToggle", "BigMultiToggle",
@@ -128,12 +129,62 @@ def test_settings_adds_a_canopy_button():
   assert "gui_app.push_widget" in src
 
 
-@pytest.mark.parametrize("path", [CANOPY, SETTINGS])
+@pytest.mark.parametrize("path", [CANOPY, CANOPY_DRIVING, SETTINGS])
 def test_no_user_visible_sunnypilot(path):
   for text in button_strings(path):
     assert "sunnypilot" not in text.lower(), f"driver-visible string says sunnypilot: {text!r}"
 
 
-@pytest.mark.parametrize("path", [CANOPY, SETTINGS])
+# ---- driving page (openpilot params) ----
+
+def test_driving_page_defines_the_layout_class():
+  classes = [n.name for n in ast.walk(tree(CANOPY_DRIVING)) if isinstance(n, ast.ClassDef)]
+  assert "CanopyDrivingLayoutMici" in classes
+  assert "NavScroller" in CANOPY_DRIVING.read_text(encoding="utf-8")
+
+
+def test_driving_page_iterates_params_instead_of_hardcoding_titles():
+  t = tree(CANOPY_DRIVING)
+  attrs = {n.attr for n in ast.walk(t) if isinstance(n, ast.Attribute)}
+  assert "PARAMS" in attrs, "canopy_driving.py must iterate settings_store.PARAMS"
+
+  constants = {n.value for n in ast.walk(t) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+  for spec in settings_store.PARAMS:
+    assert spec.title not in constants, f"{spec.title!r} is hard-coded in canopy_driving.py"
+    assert spec.name not in constants, f"{spec.name!r} is hard-coded in canopy_driving.py"
+
+
+def test_driving_page_locks_controls_and_uses_the_store():
+  calls = [n for n in ast.walk(tree(CANOPY_DRIVING))
+           if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "set_enabled"]
+  assert calls, "param rows must call set_enabled"
+  src = CANOPY_DRIVING.read_text(encoding="utf-8")
+  assert "ui_state.engaged" in src
+  assert "read_param(" in src and "write_param(" in src
+  assert "show_event" in src
+
+
+def test_canopy_page_pushes_driving_page_lazily():
+  src = CANOPY.read_text(encoding="utf-8")
+  assert "canopy_driving import CanopyDrivingLayoutMici" in src
+  assert "gui_app.push_widget(CanopyDrivingLayoutMici())" in src
+  t = tree(CANOPY)
+  parents = {}
+  for node in ast.walk(t):
+    for child in ast.iter_child_nodes(node):
+      parents[child] = node
+  guarded = False
+  for node in ast.walk(t):
+    if isinstance(node, ast.ImportFrom) and "CanopyDrivingLayoutMici" in {a.name for a in node.names}:
+      cur = node
+      while cur in parents:
+        cur = parents[cur]
+        if isinstance(cur, ast.Try):
+          guarded = True
+          break
+  assert guarded, "the driving page import must sit in a try block"
+
+
+@pytest.mark.parametrize("path", [CANOPY, CANOPY_DRIVING, SETTINGS])
 def test_py_compile(path, tmp_path):
   py_compile.compile(str(path), cfile=str(tmp_path / (Path(path).stem + ".pyc")), doraise=True)
