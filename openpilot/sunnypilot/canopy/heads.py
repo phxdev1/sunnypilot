@@ -54,6 +54,7 @@ TIER_CONTROL = {
   "blinker_intent",
   "corner_handback",
   "lane_change_nudge",
+  "turn_path",
   "voice_merge",
 }
 

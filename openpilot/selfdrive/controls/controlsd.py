@@ -29,6 +29,11 @@ try:
 except Exception:
   TurnRelease = None
 
+try:
+  from openpilot.sunnypilot.canopy.turn_path import TurnPath
+except Exception:
+  TurnPath = None
+
 State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
@@ -75,6 +80,7 @@ class Controls(ControlsExt):
 
     self.LaC = ControlsExt.initialize_lateral_control(self, self.LaC, self.CI, DT_CTRL)
     self.turn_release = TurnRelease() if TurnRelease is not None else None
+    self.turn_path = TurnPath() if TurnPath is not None else None
 
   def update(self):
     self.sm.update(15)
@@ -125,6 +131,18 @@ class Controls(ControlsExt):
         if self.turn_release.update(CS.vEgo, CS.leftBlinker, CS.rightBlinker, CS.steeringPressed, CS.steeringAngleDeg,
                                     model_v2.action.desiredCurvature, _lat_active):
           _lat_active = False
+      except Exception:
+        pass
+
+    # turn path head: shadow only, it logs the would-be path and never steers
+    if self.turn_path is not None:
+      try:
+        gps = self.sm['gpsLocationExternal'] if self.sm.all_checks(['gpsLocationExternal']) else None
+        self.turn_path.update(CS.vEgo, CS.leftBlinker, CS.rightBlinker, CS.steeringPressed,
+                              CS.steeringAngleDeg, _lat_active, model_v2.action.desiredCurvature,
+                              gps.latitude if gps is not None else None,
+                              gps.longitude if gps is not None else None,
+                              gps.bearingDeg if gps is not None else None)
       except Exception:
         pass
 
