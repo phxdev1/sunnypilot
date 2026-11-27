@@ -38,14 +38,7 @@ class OptionControlSP(ItemAction):
     self.use_float_scaling = use_float_scaling
     self.current_value = min_value
     self.label_callback = label_callback
-    if self.value_map:
-      for key in self.value_map:
-        if self.value_map[key] == self.params.get(self.param_key, return_default=True):
-          self.current_value = int(key)
-          break
-    else:
-      value = self.params.get(self.param_key, return_default=True)
-      self.current_value = int(float(value) * 100.0) if self.use_float_scaling else int(value)
+    self.current_value = self._load_value()
 
     # Initialize font and button styles
     self._font = gui_app.font(FontWeight.MEDIUM)
@@ -53,6 +46,25 @@ class OptionControlSP(ItemAction):
     # Layout rectangles for components
     self.minus_btn_rect = rl.Rectangle(0, 0, 0, 0)
     self.plus_btn_rect = rl.Rectangle(0, 0, 0, 0)
+
+  def _load_value(self) -> int:
+    """Read the stored value. Subclasses whose value does not live in Params override this and
+    _store_value, so the param key is never touched."""
+    if self.value_map:
+      for key in self.value_map:
+        if self.value_map[key] == self.params.get(self.param_key, return_default=True):
+          return int(key)
+      return self.min_value
+    value = self.params.get(self.param_key, return_default=True)
+    return int(float(value) * 100.0) if self.use_float_scaling else int(value)
+
+  def _store_value(self, value: int):
+    if self.value_map:
+      self.params.put(self.param_key, self.value_map[value])
+    elif self.use_float_scaling:
+      self.params.put(self.param_key, value / 100.0)
+    else:
+      self.params.put(self.param_key, value)
 
   def get_value(self) -> int:
     """Get the current value of the control"""
@@ -65,12 +77,7 @@ class OptionControlSP(ItemAction):
     if value == self.current_value:
       return
     self.current_value = value
-    if self.value_map:
-      self.params.put(self.param_key, self.value_map[value])
-    elif self.use_float_scaling:
-      self.params.put(self.param_key, value / 100.0)
-    else:
-      self.params.put(self.param_key, value)
+    self._store_value(value)
     if self.on_value_changed:
       self.on_value_changed(value)
 

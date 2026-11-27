@@ -97,6 +97,18 @@ class SteeringLayout(Widget):
       description=""
     )
 
+    # Canopy: Leaf-only assist strength stepper; stored outside Params, so a failure here
+    # must leave the stock Steering screen untouched. No separator, so hiding the row leaves
+    # the layout exactly as it was.
+    self._assist_strength = None
+    assist_items = []
+    try:
+      from openpilot.sunnypilot.canopy.ui_assist import assist_strength_item_sp
+      self._assist_strength = assist_strength_item_sp()
+      assist_items = [self._assist_strength]
+    except Exception:
+      self._assist_strength = None
+
     items = [
       self._mads_toggle,
       self._mads_settings_button,
@@ -106,6 +118,7 @@ class SteeringLayout(Widget):
       self._blinker_control_toggle,
       self._blinker_control_options,
       self._blinker_reengage_delay,
+      *assist_items,
       LineSeparatorSP(40),
       self._torque_control_toggle,
       self._torque_customization_button,
@@ -132,6 +145,10 @@ class SteeringLayout(Widget):
     self._blinker_control_options.set_visible(self._blinker_control_toggle.action_item.get_state())
     self._blinker_reengage_delay.set_visible(self._blinker_control_toggle.action_item.get_state())
 
+    if self._assist_strength is not None:
+      is_leaf = ui_state.CP is not None and ui_state.CP.carFingerprint in ("NISSAN_LEAF", "NISSAN_LEAF_IC")
+      self._assist_strength.set_visible(is_leaf)
+
     enforce_torque_enabled = self._torque_control_toggle.action_item.get_state()
     nnlc_enabled = self._nnlc_toggle.action_item.get_state()
     if enforce_torque_enabled and nnlc_enabled:
@@ -157,3 +174,8 @@ class SteeringLayout(Widget):
   def show_event(self):
     self._set_current_panel(PanelType.STEERING)
     self._scroller.show_event()
+    if self._assist_strength is not None:
+      try:
+        self._assist_strength.refresh()
+      except Exception:
+        pass

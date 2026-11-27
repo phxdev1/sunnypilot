@@ -50,6 +50,23 @@ class SettingsLayoutSP(OP.SettingsLayout):
     models_btn = SettingsBigButton(tr("models"), "", gui_app.texture("../../sunnypilot/selfdrive/assets/offroad/icon_models.png", ICON_SIZE, ICON_SIZE))
     models_btn.set_click_callback(lambda: gui_app.push_widget(models_panel))
 
+    # canopy page: if anything about it fails to import or build, stock Settings stays as is
+    canopy_btn = None
+    try:
+      from openpilot.selfdrive.ui.sunnypilot.mici.layouts.canopy import CanopyLayoutMici
+
+      canopy_btn = SettingsBigButton(tr("canopy"), "", gui_app.texture("icons_mici/settings.png", 64, 64))
+
+      def _push_canopy():
+        try:
+          gui_app.push_widget(CanopyLayoutMici())
+        except Exception:
+          pass
+
+      canopy_btn.set_click_callback(_push_canopy)
+    except Exception:
+      canopy_btn = None
+
     # onroad: enable button sits at the front (left of toggles)
     self._enable_offroad_btn_onroad = BigCircleButton(self.icon_offroad_enable, red=True)
     self._enable_offroad_btn_onroad.set_click_callback(lambda: self._handle_always_offroad(True))
@@ -68,6 +85,8 @@ class SettingsLayoutSP(OP.SettingsLayout):
 
     items.insert(1, models_btn)
     items.insert(5, sunnylink_btn)
+    if canopy_btn is not None:
+      items.insert(2, canopy_btn)
 
     # front slots (only one ever visible at a time): exit-always-offroad, then enable-onroad
     items.insert(0, self._enable_offroad_btn_onroad)

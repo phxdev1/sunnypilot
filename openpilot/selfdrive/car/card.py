@@ -26,6 +26,11 @@ from openpilot.sunnypilot.mads.helpers import set_alternative_experience, set_ca
 from openpilot.sunnypilot.selfdrive.car import interfaces as sunnypilot_interfaces
 from openpilot.sunnypilot.canopy.leaf_bsm import LeafBlindspot
 
+try:
+  from openpilot.sunnypilot.canopy.assist_torque import AssistTorque
+except Exception:
+  AssistTorque = None
+
 REPLAY = "REPLAY" in os.environ
 
 EventName = log.OnroadEvent.EventName
@@ -124,6 +129,9 @@ class Car:
       self.RI = RI
 
     self.leaf_bsm = LeafBlindspot() if self.CP.carFingerprint in ("NISSAN_LEAF", "NISSAN_LEAF_IC") else None
+
+    # Canopy: configurable Leaf assist torque (stock unless /data/canopy/assist_level says otherwise)
+    self.assist_torque = AssistTorque() if AssistTorque is not None and self.CP.brand == "nissan" else None
 
     self.CP.alternativeExperience = 0
     # mads
@@ -282,6 +290,12 @@ class Car:
     if self.sm.all_alive(['carControl']):
       # send car controls over can
       now_nanos = self.can_log_mono_time if REPLAY else int(time.monotonic() * 1e9)
+      # Canopy: set LKAS assist torque before the controller builds this frame's LKAS message
+      if self.assist_torque is not None:
+        try:
+          self.assist_torque.update(CS.vEgo, CS.steerFaultTemporary, CC.latActive)
+        except Exception:
+          pass
       self.last_actuators_output, can_sends = self.CI.apply(CC, convert_carControlSP(CC_SP), now_nanos)
       self.pm.send('sendcan', can_list_to_can_capnp(can_sends, msgtype='sendcan', valid=CS.canValid))
 
