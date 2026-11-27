@@ -72,6 +72,7 @@ from openpilot.common.params import Params
 
 from openpilot.sunnypilot.canopy import banner
 from openpilot.sunnypilot.canopy import bus as canopy_bus
+from openpilot.sunnypilot.canopy import green_wave
 from openpilot.sunnypilot.canopy import heads as canopy_heads
 from openpilot.sunnypilot.canopy import leadkind
 from openpilot.sunnypilot.canopy import lookahead_local
@@ -97,6 +98,7 @@ _GPS = get_gps_location_service(_params)
 _lk = {"obj": None}
 _la = {"view": None, "t": 0.0, "err": None, "n": 0}
 _sig = {"obj": None, "state": None, "t": 0.0, "key": None}
+_wave = {"last": None, "t": 0.0}
 SIGNAL_BUS_S = 3.0  # the read goes to the bus on every state change and at most this often
 
 _params_cache = {"mtime": None, "data": None}
@@ -130,6 +132,32 @@ def signal_reader():
   if _sig["obj"] is None:
     _sig["obj"] = signal_read.SignalRead()
   return _sig["obj"]
+
+
+def speed_limit_mph(sm):
+  """The posted limit the map reports, in mph, or None."""
+  try:
+    md = sm["liveMapDataSP"]
+    if md.speedLimitValid and md.speedLimit > 0:
+      return md.speedLimit * MS_TO_MPH
+  except Exception:
+    pass
+  return None
+
+
+def publish_wave(sm, view, now):
+  """The green wave for this moment (canopy/green_wave.py): written for the controls and put on the bus
+  so the head unit can draw the same wave. None when nothing is worth changing."""
+  limit = speed_limit_mph(sm)
+  wave = None
+  if view is not None and limit:
+    wave = green_wave.solve(green_wave.signals_from_view(view, limit, now), limit, now)
+  _wave["last"] = wave
+  if wave is None:
+    return None
+  green_wave.write(wave)
+  canopy_bus.bus().publish("wave", wave, key="ahead")
+  return wave
 
 
 def publish_signal(sig, now):
@@ -525,6 +553,10 @@ def lookahead_step(sm, la, onroad):
     _la["view"], _la["t"] = v, time.monotonic()
     _la["n"] += 1
     _la["err"] = None
+    try:
+      publish_wave(sm, v, time.time())
+    except Exception as e:  # the wave is an advisory: never take the stream down over it
+      _la["err"] = ("wave: %s" % e)[:200]
     return v
   except Exception as e:  # watch only: never take anything down over it
     _la["err"] = str(e)[:200]
@@ -535,7 +567,7 @@ def lookahead_loop(sleep=time.sleep, sm=None, la=None, onroad=None):
   """Answers Look Ahead locally once a second for the whole drive. Its own thread, its own
   SubMaster and reader, and it runs at the process's nice level (main already lowered it)."""
   if sm is None:
-    sm = messaging.SubMaster(["carState", _GPS])
+    sm = messaging.SubMaster(["carState", "liveMapDataSP", _GPS])
   if la is None:
     la = lookahead_local.LookAhead()
   if onroad is None:

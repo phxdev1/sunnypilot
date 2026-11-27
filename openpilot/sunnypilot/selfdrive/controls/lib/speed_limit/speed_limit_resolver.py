@@ -19,6 +19,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Polic
 from openpilot.sunnypilot.canopy.speed_offsets import LearnedSpeedOffsets
 from openpilot.sunnypilot.canopy.merge_up import MergeUp, plan_max_curvature
 from openpilot.sunnypilot.canopy.ramp_meter import RampMeterHold
+from openpilot.sunnypilot.canopy import green_wave
 
 SpeedLimitSource = custom.LongitudinalPlanSP.SpeedLimit.Source
 
@@ -96,6 +97,7 @@ class SpeedLimitResolver:
     self.speed_limit_final = 0.
     self.speed_limit_final_last = 0.
     self.speed_limit_offset = 0.
+    self.wave_mph = 0.
 
   def update_speed_limit_states(self) -> None:
     self.speed_limit_final = self.speed_limit + self.speed_limit_offset
@@ -247,6 +249,36 @@ class SpeedLimitResolver:
     else:
       self._ramp_hold_limit = self.speed_limit
 
+  def _apply_green_wave(self) -> None:
+    """Canopy green wave (canopy/green_wave.py): hudd writes the speed that rides the lights, and it is
+    only ever an offset ABOVE a limit we already hold. It needs allow_above: the whole point is to go over
+    the posted limit by up to CAP_MPH to catch the next two greens, which Mark has not okayed by default.
+    Below allow_above it computes and logs what it would have done, and touches nothing."""
+    self.wave_mph = 0.0
+    if self.ramp_meter.holding or self.speed_limit <= 0.:
+      return
+    try:
+      w = green_wave.read()
+      if w is None:
+        return
+      limit_mph = self.speed_limit * CV.MS_TO_MPH
+      target = green_wave.target_at(w, time.time())
+      if target is None or target <= limit_mph:
+        return
+      over = min(target - limit_mph, green_wave.CAP_MPH)
+      if not self.learned_offsets.allow_above:
+        if self.frame % 100 == 0:  # shadow: once every 5 s of chasing a wave
+          cloudlog.event("canopy_green_wave_shadow", over_mph=round(over, 1), catch=w.get("catch"),
+                         of=w.get("of"), limit_mph=round(limit_mph, 1))
+        return
+      self.wave_mph = round(over, 1)
+      self.speed_limit_offset += over * CV.MPH_TO_MS
+      if self.frame % 100 == 0:
+        cloudlog.event("canopy_green_wave", over_mph=self.wave_mph, catch=w.get("catch"), of=w.get("of"))
+    except Exception:  # an advisory never takes the planner down
+      cloudlog.exception("canopy green wave failed")
+      self.wave_mph = 0.0
+
   def update(self, v_ego: float, sm: messaging.SubMaster) -> None:
     self.v_ego = v_ego
     self.update_params()
@@ -255,6 +287,7 @@ class SpeedLimitResolver:
     self.speed_limit, self.distance, self.source = self._resolve_limit_sources(sm)
     self._apply_ramp_meter_hold()
     self.speed_limit_offset = self._get_speed_limit_offset()
+    self._apply_green_wave()
 
     self.update_speed_limit_states()
 
