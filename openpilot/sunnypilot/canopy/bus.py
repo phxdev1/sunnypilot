@@ -39,12 +39,15 @@ BATCH_MAX = 20
 HEARTBEAT_S = 10.0
 BACKOFF_S = (2.0, 5.0, 15.0, 60.0)
 TIMEOUT_S = 8.0
+# Cloudflare answers the default urllib User-Agent with 1010 before the request reaches Forge.
+USER_AGENT = "canopy-bus/1"
 
 
 def _post(url, token, events, proxy=None):
   body = json.dumps({"v": 1, "events": events}, separators=(",", ":")).encode()
   req = urllib.request.Request(url, data=body, method="POST",
-                               headers={"Content-Type": "application/json", "X-Canopy-Token": token})
+                               headers={"Content-Type": "application/json", "X-Canopy-Token": token,
+                                        "User-Agent": USER_AGENT})
   handler = urllib.request.ProxyHandler({"http": "http://" + proxy}) if proxy and url.startswith("http://") \
     else urllib.request.ProxyHandler({})
   with urllib.request.build_opener(handler).open(req, timeout=TIMEOUT_S) as r:
